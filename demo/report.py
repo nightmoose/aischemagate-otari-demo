@@ -53,7 +53,7 @@ def render_text(summary: dict[str, Any]) -> str:
     lines.append("Live-verified on a hosted run (a dry-run does not re-check them):")
     for item in summary.get("live_verified") or []:
         lines.append(f"- {item}")
-    lines.append("Dashboard-configured (not live-verified until a completion shows it):")
+    lines.append("Dashboard-configured, not live-verified:")
     for item in summary.get("dashboard_configured") or []:
         lines.append(f"- {item}")
     lines.append("Still unverified:")
@@ -70,5 +70,25 @@ def _model_detail(result: dict[str, Any]) -> str:
     calls = result.get("calls") or []
     if not calls:
         return ""
-    parts = [f"{call['role']}={call['model']}@{call['status']}" for call in calls]
+    parts = []
+    for call in calls:
+        piece = f"{call['role']}={call['model']}@{call['status']}"
+        verdicts = _format_verdicts(call.get("guardrail_verdicts") or [])
+        if verdicts:
+            piece += f" otari-guardrails={verdicts}"
+        parts.append(piece)
     return " ".join(parts)
+
+
+def _format_verdicts(verdicts: list[dict[str, Any]]) -> str:
+    rendered = []
+    for item in verdicts:
+        bits = [str(item.get("profile") or "guardrail")]
+        if item.get("mode"):
+            bits.append(str(item["mode"]))
+        if "valid" in item:
+            bits.append("valid=" + str(item["valid"]).lower())
+        if item.get("score") is not None:
+            bits.append(f"score={item['score']}")
+        rendered.append(" ".join(bits))
+    return "; ".join(rendered)

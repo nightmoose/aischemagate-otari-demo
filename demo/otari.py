@@ -53,6 +53,7 @@ class CallTrace:
     mcp_server_ids: list[str]
     mcp_server_names: list[str]
     code: str = ""
+    guardrail_verdicts: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -91,11 +92,12 @@ class OtariClient:
                 status, headers, body = self.transport(payload, extra_headers)
             except RetryableModelError as exc:
                 failures.append(f"{model}: {public_message(exc, self.secrets)}")
-                self._trace(role, model, 0, attempt, tokens, code=exc.code or "transport")
+                self._trace(role, model, 0, attempt, tokens, code=exc.code or "transport", verdicts=[])
                 continue
             code = _error_code(body, headers)
             detail = _error_detail(body)
             signal = _guardrail_signal(status, code, headers, body)
+            verdicts = parse_guardrail_verdicts(headers, body)
             trace_code = code
             if signal == "flag" and not trace_code:
                 trace_code = "guardrail_flagged"
@@ -103,18 +105,20 @@ class OtariClient:
                 trace_code = "guardrail_violation"
             if status >= 500 and self.guardrails and "guardrail" in detail.lower():
                 # The gateway could not run the guardrail. That is not a block or a flag.
-                self._trace(role, model, status, attempt, tokens, code="guardrail_upstream_error")
+                self._trace(
+                    role, model, status, attempt, tokens, code="guardrail_upstream_error", verdicts=verdicts
+                )
                 raise OtariError(
                     f"upstream guardrail error (HTTP {status}): {detail}",
                     status=status,
                     code="guardrail_upstream_error",
                 )
-            self._trace(role, model, status, attempt, tokens, code=trace_code)
+            self._trace(role, model, status, attempt, tokens, code=trace_code, verdicts=verdicts)
             if signal == "block":
                 raise GuardrailBlocked(
-                    detail or "guardrail blocked the request",
+                    "blocked by guardrail",
                     status=status,
-                    code=code or "guardrail_violation",
+                    code="guardrail_violation",
                 )
             if signal == "flag":
                 raise GuardrailBlocked(
@@ -154,7 +158,16 @@ class OtariClient:
             payload["mcp_servers"] = self.mcp_servers
         return payload
 
-    def _trace(self, role: str, model: str, status: int, attempt: int, max_tokens: int, code: str = "") -> None:
+    def _trace(
+        self,
+        role: str,
+        model: str,
+        status: int,
+        attempt: int,
+        max_tokens: int,
+        code: str = "",
+        verdicts: list[dict[str, Any]] | None = None,
+    ) -> None:
         profiles = [str(item.get("profile", "")) for item in (self.guardrails or [])]
         modes = [str(item.get("mode", "")) for item in (self.guardrails or [])]
         names = [str(item.get("name", "")) for item in self.mcp_servers]
@@ -172,6 +185,7 @@ class OtariClient:
                 mcp_server_ids=list(self.mcp_server_ids),
                 mcp_server_names=names,
                 code=code,
+                guardrail_verdicts=list(verdicts or []),
             )
         )
 
@@ -296,13 +310,25 @@ def _decode_body(text: str, secrets: list[str]) -> dict[str, Any]:
 
 
 def _error_code(body: dict[str, Any], headers: dict[str, str]) -> str:
-    header_code = headers.get("otari-error-code", "")
+    """Read ``code`` from the top level, from ``error``, or from ``Otari-Error-Code``.
+
+    A guardrail violation wins if it appears in any of those places, so a wrapper
+    object does not hide the block.
+    """
+
+    candidates: list[str] = []
     if isinstance(body.get("code"), str) and body["code"]:
-        return body["code"]
+        candidates.append(body["code"])
     error = body.get("error")
-    if isinstance(error, dict) and isinstance(error.get("code"), str):
-        return error["code"]
-    return header_code
+    if isinstance(error, dict) and isinstance(error.get("code"), str) and error["code"]:
+        candidates.append(error["code"])
+    header_code = headers.get("otari-error-code", "")
+    if header_code:
+        candidates.append(header_code)
+    for candidate in candidates:
+        if candidate == "guardrail_violation":
+            return candidate
+    return candidates[0] if candidates else ""
 
 
 def _error_detail(body: dict[str, Any]) -> str:
@@ -313,6 +339,34 @@ def _error_detail(body: dict[str, Any]) -> str:
     if isinstance(error, dict) and isinstance(error.get("message"), str):
         return error["message"]
     return ""
+
+
+def parse_guardrail_verdicts(headers: dict[str, str], body: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read response verdicts from the ``otari-guardrails`` header and a body array.
+
+    The header value observed on monitor calls is a JSON list, for example
+    ``[{"profile":"wilding-prompt-injection","mode":"monitor","valid":true,"score":0.0}]``.
+    A block body may instead carry ``guardrails`` with profile and score.
+    """
+
+    verdicts: list[dict[str, Any]] = []
+    raw = headers.get("otari-guardrails", "")
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        verdicts.extend(_verdict_items(parsed))
+    verdicts.extend(_verdict_items(body.get("guardrails")))
+    return verdicts
+
+
+def _verdict_items(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
 
 
 def _guardrail_signal(

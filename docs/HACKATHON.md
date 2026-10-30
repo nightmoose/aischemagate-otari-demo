@@ -2,7 +2,7 @@
 
 Demo name: Developers Wilding. Gateway: hosted Otari. Validator: AISchemaGate (`pip install aischemagate`, class `LLMGate`).
 
-Hosted runs verified chat completions, both open-weight roles, a repair, a fallback from an unknown model id to `openai/gpt-oss-120b`, a quarantine on sample 04, acceptance of the `guardrails` field in monitor mode, and rejection of a mismatched `user` (the field is omitted unless it is set). A guardrail block or flag was not observed. Items marked unverified were not part of those runs.
+Hosted runs verified chat completions, both open-weight roles, a repair, a fallback from an unknown model id to `openai/gpt-oss-120b`, and rejection of a mismatched `user`. A later policy run on 2026-10-30 at 12:25 PM ET verified `wilding-extractor` (DeepInfra Qwen3) and `wilding-repairer` (OVHcloud Mistral) at HTTP 200, plus guardrail `wilding-prompt-injection` in monitor and block. Sample 04 passed on the first extraction in that run, so a quarantine when `ticket_id` is missing is model-dependent, not guaranteed. Items still unverified are the spend caps, hosted MCP, and the end-user budget header.
 
 Live finding (2026-10-30, three probes): with guardrail mode `block`, the gateway answered HTTP 502 with detail "guardrail profile 'prompt-injection' requested but no guardrails service is configured. Set OTARI_GUARDRAILS_URL on the gateway or pass `url` on the guardrail entry." That happened on sample 05 and on a plain hello prompt. With mode `monitor`, sample 05 returned HTTP 200 and header `Otari-Guardrails` `[{"profile":"prompt-injection","mode":"monitor","valid":null,"score":null}]`, which means the check was not evaluated. The client now reports a 5xx whose detail mentions a guardrail, when guardrails are sent, as status `error` with code `guardrail_upstream_error`. It is not retried on the fallback model, and it is never counted as a block, flag, or quarantine. Open upstream question (owner: Alex Suarez): how a hosted workspace enables the guardrails service, or which `url` a guardrail entry should name. This checkout's tests stay offline.
 
@@ -24,10 +24,10 @@ Client-side backup, not a third product role: `openai/gpt-oss-120b`.
 | Feature | Exercised by | Unverified |
 | --- | --- | --- |
 | Distinct model roles | Two model lists in `demo/pipeline.py`. A hosted run used Qwen, then Mistral, and repaired. | None for the two roles themselves. |
-| Routing / fallback | Live default sends `wilding-extractor` / `wilding-repairer`. `--direct-models` and sample 03 send a vendor/model id, then `openai/gpt-oss-120b` at `max_tokens` 2048. | Sending the policy name. The policies exist (dashboard-configured). Client-side fallback is live-verified (HTTP 400 `invalid_model`, then gpt-oss). |
+| Routing / fallback | Live default sends `wilding-extractor` / `wilding-repairer`. `--direct-models` and sample 03 send a vendor/model id, then `openai/gpt-oss-120b` at `max_tokens` 2048. | None for the policy names: both returned HTTP 200 on 2026-10-30 12:25 PM ET (DeepInfra Qwen3, OVHcloud Mistral). Client-side fallback was already live-verified. |
 | Budget cap | Short sample files. Role `max_tokens` default 256, clamp 512. Client-side gpt-oss uses 2048. Budget-shaped 402/403/429 stops the run. | Whether `wilding-workspace-ceiling` ($2 monthly via `wilding-cap`) or `wilding-member-cap` ($1) rejects a call. Both are dashboard-configured. |
 | Per-user budgets | `user` is omitted unless set. Header `Otari-End-User-Budget` when `OTARI_END_USER_BUDGET` is set. | The header. Mismatched `user` rejection is live-verified. |
-| Guardrails | Default profile `wilding-prompt-injection`, mode `monitor`. Sample `05_ticket_guardrail` uses mode `block`. Block (HTTP 403) and flag both quarantine. A 5xx that mentions a guardrail is `guardrail_upstream_error`. | Profile `wilding-prompt-injection` (Lakera Guard, pending) on a completion. A live block or flag. Older profile `prompt-injection` was accepted, monitor returned `valid: null`, and block returned HTTP 502 with no guardrail service. |
+| Guardrails | Default profile `wilding-prompt-injection`, mode `monitor`. Sample 05 uses mode `block`. HTTP 403 `guardrail_violation` (top-level `code` or `error.code`) is `blocked by guardrail`. The `otari-guardrails` header is printed on the report. A 5xx that mentions a guardrail is `guardrail_upstream_error`. | None for monitor and block on this profile. Monitor header example: `valid: true`, `score: 0.0`. Block body: HTTP 403, message `Request blocked by guardrail policy.`, score `1.0`. |
 | MCP | `python -m demo mcp` speaks newline-delimited JSON-RPC and negotiates `protocolVersion`. The pipeline calls `validate_output`. | **Tools → MCP servers**. Stdio is not reachable from the gateway. |
 
 ### Pass, repair, quarantine
@@ -36,7 +36,7 @@ Client-side backup, not a third product role: `openai/gpt-oss-120b`.
 | --- | --- |
 | pass | First `validate_output` call accepts the extractor JSON. |
 | repair | First call reports violations. The repairer returns JSON that the second call accepts. |
-| quarantine | The repairer still fails the contract, the model output is not a JSON object after repair, or a guardrail blocks or flags the note. Sample `04` omits `ticket_id` because the source has no ticket number, and the repairer is told not to invent it. |
+| quarantine | The repairer still fails the contract, the model output is not a JSON object after repair, or a guardrail blocks the note (`blocked by guardrail`). Sample 04 asks the model not to invent a missing `ticket_id`. The dry-run fixture omits it and quarantines. A live model may still pass: the 2026-10-30 12:25 PM ET policy run did, on the first extraction. Quarantine there is model-dependent, not guaranteed. |
 
 A budget or authentication failure, or an upstream guardrail error (5xx while guardrails are sent), is status `error`. The CLI exits 1 and does not send the remaining samples. That is separate from quarantine so a cap is not reported as a bad document.
 
@@ -51,22 +51,26 @@ A budget or authentication failure, or an upstream guardrail error (5xx while gu
 
 No latency, cost, or accuracy figure is claimed. Fixture classifications are not measurements.
 
-## Dashboard-configured (not live-verified)
+## Dashboard-configured, not live-verified
 
-A completion has not shown these taking effect. Live runs now send the policy names and the guardrail profile below so a later run can.
+Policies and the guardrail profile were shown on the 2026-10-30 12:25 PM ET run. These spend caps were not:
 
 | Item | Exact setting |
 | --- | --- |
-| `wilding-extractor` | Request `model`. Chain: Qwen3-235B-A22B-Instruct-2507 on DeepInfra, then gpt-oss-120b. |
-| `wilding-repairer` | Request `model`. Chain: Mistral-Small-3.2-24B on OVHcloud, then gpt-oss-120b. |
 | `wilding-cap` | $2, monthly. |
 | `wilding-workspace-ceiling` | Workspace ceiling that applies `wilding-cap`. |
 | `wilding-member-cap` | Member budget, $1. |
-| `wilding-prompt-injection` | Guardrail name the client sends. Vendor Lakera Guard. Pending. |
 
-`--direct-models` still sends `alibaba/qwen3-235b-a22b-instruct-2507` and `mistralai/mistral-small-3.2-24b-instruct-2506` with a client-side gpt-oss fallback. That path is the live-verified one.
+The same run's policy chains, recorded because the calls returned 200:
 
-Still to do outside this repo: finish the pending Lakera guardrail, and attach hosted MCP only with an HTTPS URL the gateway can reach (`python -m demo mcp` stays local stdio). Leave `user` unset unless it is the API key's own user. `OTARI_END_USER_BUDGET` is unverified on the hosted wizard.
+| Request `model` | What served it |
+| --- | --- |
+| `wilding-extractor` | Qwen3-235B-A22B-Instruct-2507 on DeepInfra, then gpt-oss-120b in the policy |
+| `wilding-repairer` | Mistral-Small-3.2-24B on OVHcloud, then gpt-oss-120b in the policy |
+
+`--direct-models` still sends `alibaba/qwen3-235b-a22b-instruct-2507` and `mistralai/mistral-small-3.2-24b-instruct-2506` with a client-side gpt-oss fallback.
+
+Still unverified: hosted MCP (stdio stays local) and `OTARI_END_USER_BUDGET`. Leave `user` unset unless it is the API key's own user.
 
 ## What the tests cover
 

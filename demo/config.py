@@ -46,24 +46,21 @@ LIVE_VERIFIED = (
     "guardrails request field accepted by the gateway",
     "user omitted unless set; a user that does not match the API key is rejected",
     "live fallback from an unknown model id (HTTP 400 invalid_model) to openai/gpt-oss-120b",
-    "live quarantine when a required field is absent from the source",
+    "routing policies wilding-extractor (DeepInfra Qwen3) and wilding-repairer (OVHcloud Mistral) returned HTTP 200 on 2026-10-30 12:25 PM ET",
+    "guardrail wilding-prompt-injection monitor: header otari-guardrails valid true, score 0.0",
+    "guardrail wilding-prompt-injection block: sample 05 HTTP 403 code guardrail_violation, score 1.0",
+    "sample 04 quarantine is model-dependent: an earlier run left ticket_id missing; the 2026-10-30 12:25 PM ET policy run passed on the first extraction",
 )
 
-# Present in the dashboard. No completion in this repo has shown these taking effect.
+# Budgets are set in the dashboard. No completion has been shown hitting them.
 DASHBOARD_CONFIGURED = (
-    "routing policy wilding-extractor: Qwen3-235B-A22B-Instruct-2507 on DeepInfra, then gpt-oss-120b; request model is wilding-extractor",
-    "routing policy wilding-repairer: Mistral-Small-3.2-24B on OVHcloud, then gpt-oss-120b; request model is wilding-repairer",
     "budget wilding-cap is $2 monthly, applied as workspace ceiling wilding-workspace-ceiling",
     "member budget wilding-member-cap is $1",
-    "guardrail wilding-prompt-injection, vendor Lakera Guard, pending",
 )
 
 # Not observed on a hosted completion.
 UNVERIFIED = (
-    "routing policy names wilding-extractor and wilding-repairer as the request model",
     "workspace ceiling wilding-workspace-ceiling and member budget wilding-member-cap",
-    "guardrail profile wilding-prompt-injection on a completion",
     "hosted workspace MCP",
-    "live guardrail block or flag on the injection sample",
     "hosted per-user budget header Otari-End-User-Budget",
 )

@@ -29,20 +29,18 @@ Point at four lines, one each:
 - `01_invoice_pass` — first check accepted the JSON
 - `02_invoice_repair` — in dry-run, currency, total, and status failed and the repairer output passed (live: one run repaired a negative total; a later run passed on the first extraction)
 - `03_invoice_fallback` — primary id `example/not-a-deployed-model`, then `openai/gpt-oss-120b` (dry-run replays 404, then a valid invoice; live, the unknown id returned HTTP 400 `invalid_model` and gpt-oss answered)
-- `04_ticket_quarantine` — the note has no ticket number, and the repairer is told not to invent `ticket_id` (live: quarantined on `ticket_id`)
-- `05_ticket_guardrail` — prompt injection with guardrail mode `block` (dry-run replays HTTP 403. Live, the gateway returned HTTP 502 "no guardrails service is configured" and the demo reports an upstream guardrail error. Do not call it a block)
+- `04_ticket_quarantine` — the note has no ticket number, and the repairer is told not to invent `ticket_id`. Say the dry-run fixture quarantines, and that a live model may still pass. The 12:25 PM ET policy run passed on the first try.
+- `05_ticket_guardrail` — prompt injection with mode `block`. Live: HTTP 403, `blocked by guardrail`, score 1.0. Do not call the older HTTP 502 a block.
 
 Say: these five replies were written into `fixtures/` so the demo runs with no API key and no spend. They are not a benchmark.
 
-## 1:35–2:20 — Dashboard-configured, not yet shown on a call
+## 1:35–2:20 — What the 12:25 PM ET run showed
 
-Say these exist in the dashboard and that this recording has not shown a completion using them, unless you just did.
-
-- `wilding-extractor`: Qwen3-235B-A22B-Instruct-2507 on DeepInfra, then gpt-oss-120b. Live runs send that name as `model`.
-- `wilding-repairer`: Mistral-Small-3.2-24B on OVHcloud, then gpt-oss-120b.
-- `wilding-cap` is $2 monthly, workspace ceiling `wilding-workspace-ceiling`. Member budget `wilding-member-cap` is $1.
-- Guardrail `wilding-prompt-injection` (Lakera Guard) is pending. The client sends that profile. A block has not been observed.
-- `user` stays unset unless it matches the API key.
+- `wilding-extractor` returned HTTP 200 (DeepInfra Qwen3, then gpt-oss-120b in the policy).
+- `wilding-repairer` returned HTTP 200 (OVHcloud Mistral, then gpt-oss-120b in the policy).
+- Monitor calls carried `otari-guardrails` with `wilding-prompt-injection`, `valid: true`, `score: 0.0`.
+- Sample 05 in block mode returned HTTP 403, code `guardrail_violation`, score `1.0`. The report says `blocked by guardrail`.
+- Spend caps are still only dashboard-configured: `wilding-cap` $2 monthly as `wilding-workspace-ceiling`, and `wilding-member-cap` $1. Do not say a call was stopped by them.
 
 ## 2:20–2:45 — MCP
 

@@ -130,7 +130,7 @@ def run_sample(
                 sample=name,
                 status="quarantine",
                 contract=contract_name,
-                reason=f"guardrail:{exc.code}",
+                reason=_guardrail_reason(exc),
             ),
             client,
             trace_start,
@@ -177,7 +177,7 @@ def run_sample(
                 sample=name,
                 status="quarantine",
                 contract=contract_name,
-                reason=f"guardrail:{exc.code}",
+                reason=_guardrail_reason(exc),
                 violations_before_repair=first_violations,
             ),
             client,
@@ -252,7 +252,14 @@ def _trace_dict(item: Any) -> dict[str, Any]:
         "mcp_server_ids": list(item.mcp_server_ids),
         "mcp_server_names": list(item.mcp_server_names),
         "code": item.code,
+        "guardrail_verdicts": list(item.guardrail_verdicts),
     }
+
+
+def _guardrail_reason(exc: GuardrailBlocked) -> str:
+    if exc.code == "guardrail_violation":
+        return "blocked by guardrail"
+    return f"guardrail:{exc.code}"
 
 
 def _content_text(completion: dict[str, Any]) -> str:
