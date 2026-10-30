@@ -1,0 +1,12 @@
+[
+  {
+    "status": 403,
+    "headers": {
+      "Otari-Error-Code": "guardrail_violation"
+    },
+    "body": {
+      "detail": "Request blocked by guardrail profile prompt-injection.",
+      "code": "guardrail_violation"
+    }
+  }
+]

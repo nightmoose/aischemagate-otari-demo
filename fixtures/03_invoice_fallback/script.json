@@ -1,0 +1,26 @@
+[
+  {
+    "status": 503,
+    "body": {
+      "detail": "upstream unavailable",
+      "code": "upstream_unavailable"
+    }
+  },
+  {
+    "status": 200,
+    "body": {
+      "id": "fixture-03-fallback",
+      "model": "openai/gpt-oss-120b",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"invoice_id\":\"INV-1002\",\"vendor\":\"Fabrikam\",\"currency\":\"USD\",\"total\":18,\"status\":\"open\"}"
+          }
+        }
+      ]
+    }
+  }
+]
