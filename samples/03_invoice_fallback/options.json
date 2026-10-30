@@ -1,0 +1,3 @@
+{
+  "extractor_models": ["example/not-a-deployed-model", "openai/gpt-oss-120b"]
+}

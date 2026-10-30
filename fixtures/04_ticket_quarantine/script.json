@@ -1,0 +1,36 @@
+[
+  {
+    "status": 200,
+    "body": {
+      "id": "fixture-04-extractor",
+      "model": "alibaba/qwen3-235b-a22b-instruct-2507",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"priority\":\"high\",\"category\":\"access\",\"summary\":\"Cannot log in after a password reset\"}"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "status": 200,
+    "body": {
+      "id": "fixture-04-repairer",
+      "model": "mistralai/mistral-small-3.2-24b-instruct-2506",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"priority\":\"high\",\"category\":\"access\",\"summary\":\"Cannot log in after a password reset\"}"
+          }
+        }
+      ]
+    }
+  }
+]
