@@ -10,6 +10,12 @@ EXTRACTOR_MODEL = "alibaba/qwen3-235b-a22b-instruct-2507"
 # Open-weight repairer. Vendor: Mistral. A different vendor from the extractor.
 REPAIRER_MODEL = "mistralai/mistral-small-3.2-24b-instruct-2506"
 
+# Dashboard routing policies. Callers send these names as `model`.
+# The chains behind them are dashboard-configured and have not been observed
+# on a completion from this client.
+EXTRACTOR_POLICY = "wilding-extractor"
+REPAIRER_POLICY = "wilding-repairer"
+
 # Client-side backup used when the role model fails with a retryable error.
 # gpt-oss is a reasoning model: the fallback call uses FALLBACK_MAX_TOKENS
 # so the generation cap is not spent before the JSON object. 2048 is a bound,
@@ -27,7 +33,8 @@ DEFAULT_MAX_TOKENS = 256
 
 # Otari rejects a `user` that does not match the API key's own user, so it is omitted by default.
 DEFAULT_USER = ""
-DEFAULT_GUARDRAIL_PROFILE = "prompt-injection"
+# Dashboard name for the Lakera Guard check. Pending there; not observed on a completion.
+DEFAULT_GUARDRAIL_PROFILE = "wilding-prompt-injection"
 DEFAULT_GUARDRAIL_MODE = "monitor"
 
 # Observed on a hosted run. A dry-run does not re-check these.
@@ -42,11 +49,21 @@ LIVE_VERIFIED = (
     "live quarantine when a required field is absent from the source",
 )
 
-# Not observed on that hosted run, or not exercised by an authenticated call.
+# Present in the dashboard. No completion in this repo has shown these taking effect.
+DASHBOARD_CONFIGURED = (
+    "routing policy wilding-extractor: Qwen3-235B-A22B-Instruct-2507 on DeepInfra, then gpt-oss-120b; request model is wilding-extractor",
+    "routing policy wilding-repairer: Mistral-Small-3.2-24B on OVHcloud, then gpt-oss-120b; request model is wilding-repairer",
+    "budget wilding-cap is $2 monthly, applied as workspace ceiling wilding-workspace-ceiling",
+    "member budget wilding-member-cap is $1",
+    "guardrail wilding-prompt-injection, vendor Lakera Guard, pending",
+)
+
+# Not observed on a hosted completion.
 UNVERIFIED = (
-    "dashboard routing policy",
+    "routing policy names wilding-extractor and wilding-repairer as the request model",
+    "workspace ceiling wilding-workspace-ceiling and member budget wilding-member-cap",
+    "guardrail profile wilding-prompt-injection on a completion",
     "hosted workspace MCP",
-    "hosted guardrail mandate",
     "live guardrail block or flag on the injection sample",
     "hosted per-user budget header Otari-End-User-Budget",
 )

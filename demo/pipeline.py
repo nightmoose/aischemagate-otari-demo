@@ -12,7 +12,14 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from demo.config import DEFAULT_GUARDRAIL_PROFILE, EXTRACTOR_MODEL, FALLBACK_MODEL, REPAIRER_MODEL
+from demo.config import (
+    DEFAULT_GUARDRAIL_PROFILE,
+    EXTRACTOR_MODEL,
+    EXTRACTOR_POLICY,
+    FALLBACK_MODEL,
+    REPAIRER_MODEL,
+    REPAIRER_POLICY,
+)
 from demo.errors import BudgetExceeded, FallbackExhausted, GuardrailBlocked, OtariError, public_message
 from demo.gate import contract_brief, load_contracts
 from demo.mcp_server import TOOL_NAME, InProcessMcp
@@ -35,11 +42,15 @@ class SampleResult:
         return asdict(self)
 
 
-def extractor_models() -> list[str]:
+def extractor_models(*, use_policies: bool) -> list[str]:
+    if use_policies:
+        return [EXTRACTOR_POLICY]
     return [EXTRACTOR_MODEL, FALLBACK_MODEL]
 
 
-def repairer_models() -> list[str]:
+def repairer_models(*, use_policies: bool) -> list[str]:
+    if use_policies:
+        return [REPAIRER_POLICY]
     return [REPAIRER_MODEL, FALLBACK_MODEL]
 
 
@@ -92,6 +103,8 @@ def run_sample(
     client: OtariClient,
     session: InProcessMcp,
     compiled: dict[str, Any],
+    *,
+    use_policies: bool = False,
 ) -> SampleResult:
     name = sample_dir.name
     contract_name = (sample_dir / "contract.txt").read_text(encoding="utf-8").strip()
@@ -107,7 +120,7 @@ def run_sample(
     trace_start = len(client.traces)
     try:
         extracted = client.complete(
-            models=_model_list(options.get("extractor_models"), extractor_models()),
+            models=_model_list(options.get("extractor_models"), extractor_models(use_policies=use_policies)),
             messages=_extract_messages(brief, source, forbid_invention=forbid),
             role="extractor",
         )
@@ -148,7 +161,7 @@ def run_sample(
 
     try:
         repaired = client.complete(
-            models=_model_list(options.get("repairer_models"), repairer_models()),
+            models=_model_list(options.get("repairer_models"), repairer_models(use_policies=use_policies)),
             messages=_repair_messages(
                 brief,
                 _content_text(extracted),

@@ -5,10 +5,13 @@ import pytest
 
 from demo.cli import main
 from demo.config import (
+    DEFAULT_GUARDRAIL_PROFILE,
     EXTRACTOR_MODEL,
+    EXTRACTOR_POLICY,
     FALLBACK_MAX_TOKENS,
     FALLBACK_MODEL,
     REPAIRER_MODEL,
+    REPAIRER_POLICY,
     UNAVAILABLE_MODEL,
 )
 
@@ -26,7 +29,10 @@ def test_dry_run_classifies_samples(capsys):
     assert code == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["mode"] == "dry-run"
+    assert summary["model_selection"] == "direct"
     assert summary["live_otari_completions"] is False
+    assert any("wilding-extractor" in item for item in summary["dashboard_configured"])
+    assert all("wilding-extractor" not in item for item in summary["live_verified"])
     assert "hosted chat completions" in summary["live_verified"]
     assert "user omitted unless set; a user that does not match the API key is rejected" in summary["live_verified"]
     assert "live fallback from an unknown model id (HTTP 400 invalid_model) to openai/gpt-oss-120b" in summary["live_verified"]
@@ -45,7 +51,8 @@ def test_dry_run_classifies_samples(capsys):
     assert repair["calls"][1]["model"] == REPAIRER_MODEL
     assert repair["calls"][0]["max_tokens"] == 256
     assert repair["calls"][0]["user"] == "demo-operator"
-    assert repair["calls"][0]["guardrail_profiles"] == ["prompt-injection"]
+    assert repair["calls"][0]["guardrail_profiles"] == [DEFAULT_GUARDRAIL_PROFILE]
+    assert DEFAULT_GUARDRAIL_PROFILE == "wilding-prompt-injection"
 
     fallback = by_name["03_invoice_fallback"]
     assert [call["model"] for call in fallback["calls"]] == [UNAVAILABLE_MODEL, FALLBACK_MODEL]
@@ -64,6 +71,30 @@ def test_dry_run_classifies_samples(capsys):
     assert blocked["calls"][0]["model"] == EXTRACTOR_MODEL
     assert blocked["calls"][0]["guardrail_modes"] == ["block"]
     assert by_name["01_invoice_pass"]["calls"][0]["guardrail_modes"] == ["monitor"]
+
+
+def test_use_policies_sends_policy_names_and_keeps_sample_overrides(capsys):
+    code = main(
+        ["run", "samples", "--dry-run", "--fixtures", "fixtures", "--json", "--use-policies"]
+    )
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["model_selection"] == "policies"
+    by_name = {item["sample"]: item for item in summary["results"]}
+    assert by_name["01_invoice_pass"]["calls"][0]["model"] == EXTRACTOR_POLICY
+    assert by_name["02_invoice_repair"]["calls"][1]["model"] == REPAIRER_POLICY
+    assert [call["model"] for call in by_name["03_invoice_fallback"]["calls"]] == [
+        UNAVAILABLE_MODEL,
+        FALLBACK_MODEL,
+    ]
+    assert by_name["01_invoice_pass"]["calls"][0]["guardrail_profiles"] == ["wilding-prompt-injection"]
+
+
+def test_policy_and_direct_flags_conflict(capsys):
+    code = main(["run", "samples", "--dry-run", "--use-policies", "--direct-models"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "--use-policies" in captured.err
 
 
 def test_dry_run_does_not_touch_the_network(monkeypatch, capsys):

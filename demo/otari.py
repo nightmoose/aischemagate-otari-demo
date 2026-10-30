@@ -18,9 +18,11 @@ from demo.config import (
     DEFAULT_GUARDRAIL_MODE,
     DEFAULT_GUARDRAIL_PROFILE,
     DEFAULT_MAX_TOKENS,
+    EXTRACTOR_POLICY,
     FALLBACK_MAX_TOKENS,
     FALLBACK_MODEL,
     MAX_TOKENS_LIMIT,
+    REPAIRER_POLICY,
 )
 from demo.errors import (
     BudgetExceeded,
@@ -185,10 +187,10 @@ class OpenAIShape:
         self.chat = _Chat(self)
 
     def models_for(self, model: str) -> list[str]:
-        chain = [model]
-        if model != FALLBACK_MODEL:
-            chain.append(FALLBACK_MODEL)
-        return chain
+        # A routing policy already names its own fallback chain.
+        if model in (EXTRACTOR_POLICY, REPAIRER_POLICY, FALLBACK_MODEL):
+            return [model]
+        return [model, FALLBACK_MODEL]
 
 
 class _Chat:

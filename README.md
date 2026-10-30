@@ -6,7 +6,9 @@ An extractor model on the hosted [Otari](https://otari.ai) gateway turns the not
 
 Live calls use the workspace key in `OTARI_API_KEY`. That value is read at runtime and is never written by this repo. `--dry-run` replays authored fixtures and does not call Otari, so tests run without the key.
 
-A hosted run already confirmed: chat completions, the extractor and repairer roles, a repair (Qwen, then Mistral), that the `guardrails` field is accepted, and that `user` is sent only when set because a mismatched `user` is rejected. Still unverified: the dashboard routing policy, hosted MCP, a guardrail mandate, a live block or flag, and the `Otari-End-User-Budget` header. A second hosted run on 2026-10-30 also confirmed a live fallback (`example/not-a-deployed-model` returned HTTP 400 `invalid_model`, then `openai/gpt-oss-120b` answered) and a live quarantine (sample 04 stayed missing `ticket_id` after the repairer). In that run sample 05 (guardrail mode `block`) got HTTP 502 from both Qwen and gpt-oss and ended as an error, so no block or flag was observed. Live finding (2026-10-30, three probes): with guardrail mode `block`, the gateway answered HTTP 502 with detail "guardrail profile 'prompt-injection' requested but no guardrails service is configured. Set OTARI_GUARDRAILS_URL on the gateway or pass `url` on the guardrail entry." That happened on sample 05 and on a plain hello prompt. With mode `monitor`, sample 05 returned HTTP 200 and header `Otari-Guardrails` `[{"profile":"prompt-injection","mode":"monitor","valid":null,"score":null}]`, which means the check was not evaluated. The client now reports a 5xx whose detail mentions a guardrail, when guardrails are sent, as status `error` with code `guardrail_upstream_error`. It is not retried on the fallback model, and it is never counted as a block, flag, or quarantine. Open upstream question (owner: Alex Suarez): how a hosted workspace enables the guardrails service, or which `url` a guardrail entry should name. Sample 02 passed on the first extraction in that run, so it was not repaired. An unauthenticated probe on 2026-10-30 checked the URL shape only: `GET https://otari.ai/api/v1/models` returned HTTP 401, and `GET https://api.otari.ai/v1/models` returned HTTP 404 telling the client to use `/api/v1`.
+A hosted run already confirmed: chat completions, the extractor and repairer roles, a repair (Qwen, then Mistral), that the `guardrails` field is accepted, and that `user` is sent only when set because a mismatched `user` is rejected. Still unverified on a completion: hosted MCP, a live block or flag, and the `Otari-End-User-Budget` header. A second hosted run on 2026-10-30 also confirmed a live fallback (`example/not-a-deployed-model` returned HTTP 400 `invalid_model`, then `openai/gpt-oss-120b` answered) and a live quarantine (sample 04 stayed missing `ticket_id` after the repairer). In that run sample 05 (guardrail mode `block`) got HTTP 502 from both Qwen and gpt-oss and ended as an error, so no block or flag was observed. Live finding (2026-10-30, three probes): with guardrail mode `block`, the gateway answered HTTP 502 with detail "guardrail profile 'prompt-injection' requested but no guardrails service is configured. Set OTARI_GUARDRAILS_URL on the gateway or pass `url` on the guardrail entry." That happened on sample 05 and on a plain hello prompt. With mode `monitor`, sample 05 returned HTTP 200 and header `Otari-Guardrails` `[{"profile":"prompt-injection","mode":"monitor","valid":null,"score":null}]`, which means the check was not evaluated. The client now reports a 5xx whose detail mentions a guardrail, when guardrails are sent, as status `error` with code `guardrail_upstream_error`. It is not retried on the fallback model, and it is never counted as a block, flag, or quarantine. Open upstream question (owner: Alex Suarez): how a hosted workspace enables the guardrails service, or which `url` a guardrail entry should name. Sample 02 passed on the first extraction in that run, so it was not repaired. Dashboard-configured, and not live-verified until a completion shows them: policies `wilding-extractor` (Qwen3-235B-A22B-Instruct-2507 on DeepInfra, then gpt-oss-120b) and `wilding-repairer` (Mistral-Small-3.2-24B on OVHcloud, then gpt-oss-120b); budget `wilding-cap` at $2 monthly as workspace ceiling `wilding-workspace-ceiling`; member budget `wilding-member-cap` at $1; guardrail `wilding-prompt-injection` (Lakera Guard, pending). A live run sends the policy names. `--direct-models` keeps the vendor/model ids and the client-side gpt-oss fallback.
+
+An unauthenticated probe on 2026-10-30 checked the URL shape only: `GET https://otari.ai/api/v1/models` returned HTTP 401, and `GET https://api.otari.ai/v1/models` returned HTTP 404 telling the client to use `/api/v1`.
 
 ## Architecture
 
@@ -31,13 +33,12 @@ flowchart TD
 
 Roles:
 
-| Role | Model id | Vendor |
+| Role | What a live run sends | Direct-model option |
 | --- | --- | --- |
-| Extractor | `alibaba/qwen3-235b-a22b-instruct-2507` | Alibaba |
-| Repairer | `mistralai/mistral-small-3.2-24b-instruct-2506` | Mistral |
-| Client-side fallback for either role | `openai/gpt-oss-120b` | OpenAI |
+| Extractor | `wilding-extractor` | `alibaba/qwen3-235b-a22b-instruct-2507`, then `openai/gpt-oss-120b` |
+| Repairer | `wilding-repairer` | `mistralai/mistral-small-3.2-24b-instruct-2506`, then `openai/gpt-oss-120b` |
 
-Model ids are the plain `vendor/model` form. Role calls set `max_tokens` (default 256, clamped at 512), `temperature` 0, and `response_format` `json_object`. The fallback model `openai/gpt-oss-120b` is a reasoning model, so that call uses `max_tokens` 2048. 2048 is a bound so the cap is not spent before the JSON; it is not a measured minimum. `user` is omitted unless `--user` or `OTARI_USER` is set.
+A live run sends the routing policy name as `model` (`--use-policies`, the live default). `--direct-models` sends the plain `vendor/model` ids and, if that call fails in a retryable way, `openai/gpt-oss-120b`. Sample `03_invoice_fallback` always uses that direct list, including under `--use-policies`, so the client fallback stays visible. Role calls set `max_tokens` (default 256, clamped at 512), `temperature` 0, and `response_format` `json_object`. The client-side gpt-oss call uses `max_tokens` 2048. 2048 is a bound so the cap is not spent before the JSON; it is not a measured minimum. A policy request uses the role cap, because the gateway applies that cap to whichever entry it picks. `user` is omitted unless `--user` or `OTARI_USER` is set.
 
 Validation is `LLMGate.validate_only`, reached through the MCP tool `validate_output`. The gate is constructed with the caller's OpenAI-compatible client (`llm=`). The check runs in-process on the engine installed with `aischemagate`. The hosted AISchemaGate egress API was not called.
 
@@ -56,7 +57,7 @@ export OTARI_API_KEY="paste-the-workspace-key-here"
 python -m demo run samples/
 ```
 
-Do not pass `--user` unless that string is the API key's own user. A hosted run rejected a mismatched `user`. Do not commit the key. `.env.example` lists the variable names with empty values.
+That live command uses `--use-policies`: the request `model` is `wilding-extractor` or `wilding-repairer`. Those names are dashboard-configured and have not been observed on a completion. Pass `--direct-models` to send the vendor/model ids and the client-side gpt-oss fallback instead. Do not pass `--user` unless that string is the API key's own user. A hosted run rejected a mismatched `user`. Do not commit the key. `.env.example` lists the variable names with empty values.
 
 Other entry points:
 
@@ -74,15 +75,15 @@ Judges should score a feature only where this repo actually exercises it. "Live-
 | Feature | What the code does | Where | Live-verified |
 | --- | --- | --- | --- |
 | Distinct model roles | Extractor and repairer are different open-weight ids from different vendors. Each sample names one role, then the other only after a contract violation. | `demo/config.py`, `demo/pipeline.py` (`extractor_models`, `repairer_models`) | Yes. A hosted run repaired with Qwen, then Mistral. |
-| Routing / fallback | `OtariClient.complete` walks the role's model list. Retryable statuses include 404, 408, 409, 429, 500, 502, 503, 504, transport errors, and a 400/422 whose body says the model does not exist. A guardrail result and a budget refusal are not retried. Sample `03_invoice_fallback` names `example/not-a-deployed-model` first, then `openai/gpt-oss-120b` at `max_tokens` 2048. | `demo/otari.py`, `samples/03_invoice_fallback/options.json` | Live-verified: the unknown id returned HTTP 400 `invalid_model` and `openai/gpt-oss-120b` answered. Dashboard policy not applied. |
-| Budget cap | Inputs are a few lines. Role `max_tokens` defaults to 256 and is clamped to 512. The reasoning fallback uses 2048. A body whose code or detail contains `budget` on HTTP 402, 403, or 429 raises `BudgetExceeded` and the run stops. | `demo/config.py`, `demo/otari.py`, `demo/cli.py` | No |
+| Routing / fallback | Live default `--use-policies` sends `wilding-extractor` or `wilding-repairer` and does not add a client-side second model. `--direct-models` sends the vendor/model id, then `openai/gpt-oss-120b` at `max_tokens` 2048. Retryable statuses include 404, 408, 409, 429, 500, 502, 503, 504, transport errors, and a 400/422 whose body says the model does not exist. A guardrail result and a budget refusal are not retried. Sample `03_invoice_fallback` keeps the direct list (`example/not-a-deployed-model`, then gpt-oss) even in policy mode. | `demo/cli.py`, `demo/pipeline.py`, `samples/03_invoice_fallback/options.json` | Client-side fallback is live-verified (HTTP 400 `invalid_model`, then gpt-oss). Sending the policy name is dashboard-configured, not live-verified. |
+| Budget cap | Inputs are a few lines. Role `max_tokens` defaults to 256 and is clamped to 512. The client-side reasoning fallback uses 2048. A body whose code or detail contains `budget` on HTTP 402, 403, or 429 raises `BudgetExceeded` and the run stops. | `demo/config.py`, `demo/otari.py`, `demo/cli.py` | The $2 workspace ceiling and the $1 member budget are dashboard-configured, not observed on a completion. |
 | Per-user attribution | `user` is omitted unless `--user` or `OTARI_USER` is set. When `OTARI_END_USER_BUDGET` is set, the client also sends header `Otari-End-User-Budget`. | `demo/otari.py` `_payload` | The omit-unless-set behavior and the rejection of a mismatched `user` are live-verified. The budget header is not. |
-| Guardrails | Requests send `guardrails: [{profile, mode, on: [input]}]` unless `--guardrail-mode off`. Default profile `prompt-injection`, mode `monitor`. Sample `05_ticket_guardrail` sets mode `block` and sends a prompt-injection note. HTTP 403 `guardrail_violation` is a block. A 200 whose guardrail header or result says flag or block is a flag. Either one quarantines the note and does not call the repairer. | `demo/otari.py`, `samples/05_ticket_guardrail/options.json` | The request field was accepted on a hosted run. A live block or flag was not observed. Monitor mode was not blocked. With mode `block`, the gateway answered HTTP 502 because no guardrails service is configured. That is reported as an upstream guardrail error, not a block. Monitor returned 200 with `valid: null` (not evaluated). |
+| Guardrails | Requests send `guardrails: [{profile, mode, on: [input]}]` unless `--guardrail-mode off`. Default profile `wilding-prompt-injection`, mode `monitor`. Sample `05_ticket_guardrail` sets mode `block` and sends a prompt-injection note. HTTP 403 `guardrail_violation` is a block. A 200 whose guardrail header or result says flag or block is a flag. Either one quarantines the note and does not call the repairer. A 5xx whose detail mentions a guardrail, while guardrails are on the request, is `guardrail_upstream_error` and is not a block. | `demo/otari.py`, `demo/config.py`, `samples/05_ticket_guardrail/options.json` | The request field was accepted when the profile was `prompt-injection`. That profile got HTTP 502 with no guardrail service configured (`guardrail_upstream_error`), and monitor returned `valid: null`. Profile `wilding-prompt-injection` (Lakera Guard) is dashboard-pending, not observed on a completion. |
 | MCP | Tool `validate_output` is the validation path the pipeline calls, via the same JSON-RPC handler as `python -m demo mcp`. Stdio is newline-delimited JSON. `Content-Length` is still accepted. `initialize` echoes the client's `protocolVersion` when it is supported, otherwise `2025-06-18`. Hosted Otari needs a Streamable HTTP URL. This stdio server is not that URL. | `demo/mcp_server.py`, `demo/pipeline.py` | No |
 
-## Dashboard setup still required
+## Dashboard
 
-These clicks are the operator's job. This environment did not perform them. Labels match the hosted how-to pages read from docs.otari.ai on 2026-10-30. Where a page did not name a control, this list does not invent one.
+Routing policies, the workspace ceiling, the member budget, and the Lakera guardrail name below are dashboard-configured. They are not live-verified until a completion shows them. API key handling and hosted MCP are still operator steps.
 
 ### API key
 
@@ -95,37 +96,26 @@ The published quickstart still shows `https://api.otari.ai/v1`. The live host pr
 
 Confirm a call, when you make one, on the workspace **Usage** tab. This repo has not seen that tab.
 
-### Routing policy
+### Routing policies (dashboard-configured, not live-verified)
 
-From [Create a multi-provider routing](https://docs.otari.ai/how-to-guides/create-a-multi-provider-routing):
+These policies exist. No completion from this repo has sent the policy name and shown which entry answered.
 
-1. Open the target workspace.
-2. Open **Routing**.
-3. Click **Policies**.
-4. Name the policy `wilding-extractor`.
-5. Choose **Add a fallback chain**.
-6. First entry: `alibaba/qwen3-235b-a22b-instruct-2507`. Second entry: `openai/gpt-oss-120b`.
-7. Click **Create policy**.
-8. Create `wilding-repairer` the same way. First entry: `mistralai/mistral-small-3.2-24b-instruct-2506`. Second entry: `openai/gpt-oss-120b`.
+| Policy name sent as `model` | Chain |
+| --- | --- |
+| `wilding-extractor` | Qwen3-235B-A22B-Instruct-2507 on DeepInfra, then gpt-oss-120b |
+| `wilding-repairer` | Mistral-Small-3.2-24B on OVHcloud, then gpt-oss-120b |
 
-The same guide says a routing policy routes across **your** provider keys. Wallet-billed models are served when the request names one model directly. A policy entry with no provider key of yours is skipped, and a request whose entries all fail that way is refused with `managed_credential_unsupported`. This demo therefore names each role model on the request and does client-side fallback. Create the policies if the workspace has provider keys for those models. With only the hosted wallet, do not expect the policy to replace the model id. That interaction was not live-verified.
+`--use-policies` (default when the run is not `--dry-run`) sends those names and does not add a second client-side model. `--direct-models` sends `alibaba/qwen3-235b-a22b-instruct-2507` or `mistralai/mistral-small-3.2-24b-instruct-2506`, then `openai/gpt-oss-120b` if the first call is retryable. That client-side path is the one a hosted run already showed (HTTP 400 `invalid_model` on a missing id, then gpt-oss).
 
-### Budget cap and per-user budgets
+### Budgets (dashboard-configured, not live-verified)
 
-Account cap, from [Set a budget & ceiling](https://docs.otari.ai/how-to-guides/set-a-budget-and-ceiling). A budget does not block requests until a spend ceiling uses it.
+No completion has been shown hitting either cap.
 
-1. Open **Organization** and select **Spend & Budgets**.
-2. Click **Add budget**.
-3. Name: `wilding-cap`. Amount: `2` (USD). Period: **Monthly**.
-4. Click **Add budget**.
-5. Click **Add ceiling**.
-6. Capping: the demo workspace (the wizard offers the whole organization or one workspace).
-7. Provider instance: leave blank so the ceiling covers every provider.
-8. Budget: `wilding-cap`.
-9. Name: `wilding-workspace-ceiling`.
-10. Click **Add ceiling**.
-
-The concepts page at `otari.ai/docs/hosted/concepts/budgets` also describes a member scope ("all members, or one specific member"). The ceiling wizard text on docs.otari.ai does not include a member picker. If the dashboard you open shows a member control, add a second ceiling for the member that owns the API key, with an amount no higher than the workspace ceiling. That control was not confirmed.
+| Name | Setting |
+| --- | --- |
+| `wilding-cap` | $2, monthly |
+| `wilding-workspace-ceiling` | Workspace ceiling that applies `wilding-cap` |
+| `wilding-member-cap` | Member budget, $1 |
 
 Per-user attribution on the request:
 
@@ -134,32 +124,15 @@ Per-user attribution on the request:
 
 Exact error code for an exhausted ceiling was not in the pages read. The client treats HTTP 402, 403, or 429 as a budget stop when the code or detail contains `budget`, and it does not try the fallback model.
 
-### Guardrails
+### Guardrail (dashboard-configured, pending, not live-verified)
 
-From [Manage guardrails](https://docs.otari.ai/how-to-guides/manage-guardrails):
-
-1. Open **Organization → Guardrails**.
-2. Click **Configure guardrail**.
-3. Pick a risk type the wizard lists (bias, hallucination, content safety, PII, or toxicity) and a catalog guardrail for a prompt-injection style check if the catalog offers one.
-4. Name it `wilding-prompt-injection`.
-5. API key: enter `None` to use the guardrail's environment variable, or paste the credential the wizard asks for.
-6. Click **Configure guardrail**.
-7. Click **Mandate a guardrail**.
-8. Choose the catalog guardrail you just configured.
-9. Check name: `wilding-input-check`.
-10. Start in **monitor**. Move to **block** when you want refusals. If the guardrail cannot run, choose refuse only after you switch to block (the page says only blocking mandates can refuse).
-11. Select the demo workspace.
-12. Click **Mandate a guardrail**.
-
-The client sends:
+The guardrail will be named `wilding-prompt-injection`, vendor Lakera Guard. It is pending. The client now sends that profile name by default. A completion has not shown this profile.
 
 ```json
-"guardrails": [{"profile": "prompt-injection", "mode": "monitor", "on": ["input"]}]
+"guardrails": [{"profile": "wilding-prompt-injection", "mode": "monitor", "on": ["input"]}]
 ```
 
-A hosted run accepted this field. Sample `05_ticket_guardrail` overrides the mode to `block` and sends a prompt-injection note. That block-or-flag outcome is **unverified**: the earlier hosted run used monitor, and the note was classified as a normal pass.
-
-A blocked call is documented as HTTP 403, header `Otari-Error-Code: guardrail_violation`, body `{"detail": "...", "code": "guardrail_violation"}`. The client also treats a 200 as a flag when a guardrail response header or a `guardrail_results` / `moderation` object says flag or block. Either result quarantines the note and skips the repairer. The flag shape was not captured from a live response.
+Sample `05_ticket_guardrail` sets mode `block`. A hosted run that sent profile `prompt-injection` with mode `block` got HTTP 502, detail that no guardrails service was configured. The client reports that as `guardrail_upstream_error`, not as a block or a quarantine. Monitor on that older profile returned HTTP 200 and `valid: null`. A block (HTTP 403 `guardrail_violation`) or a flag on a 200 still quarantines the note and skips the repairer. Neither a block nor a flag has been observed.
 
 ### MCP
 

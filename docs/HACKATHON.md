@@ -24,10 +24,10 @@ Client-side backup, not a third product role: `openai/gpt-oss-120b`.
 | Feature | Exercised by | Unverified |
 | --- | --- | --- |
 | Distinct model roles | Two model lists in `demo/pipeline.py`. A hosted run used Qwen, then Mistral, and repaired. | None for the two roles themselves. |
-| Routing / fallback | Sample `03_invoice_fallback` calls `example/not-a-deployed-model`, then `openai/gpt-oss-120b` with `max_tokens` 2048. Unknown-model 400/404/422 responses are retryable. | Dashboard **Routing → Policies**. The client-side fallback is live-verified (HTTP 400 `invalid_model`, then gpt-oss answered). |
-| Budget cap | Short sample files. Role `max_tokens` default 256, clamp 512. Fallback model uses 2048. Budget-shaped 402/403/429 stops the run. | **Organization → Spend & Budgets** ceiling. |
+| Routing / fallback | Live default sends `wilding-extractor` / `wilding-repairer`. `--direct-models` and sample 03 send a vendor/model id, then `openai/gpt-oss-120b` at `max_tokens` 2048. | Sending the policy name. The policies exist (dashboard-configured). Client-side fallback is live-verified (HTTP 400 `invalid_model`, then gpt-oss). |
+| Budget cap | Short sample files. Role `max_tokens` default 256, clamp 512. Client-side gpt-oss uses 2048. Budget-shaped 402/403/429 stops the run. | Whether `wilding-workspace-ceiling` ($2 monthly via `wilding-cap`) or `wilding-member-cap` ($1) rejects a call. Both are dashboard-configured. |
 | Per-user budgets | `user` is omitted unless set. Header `Otari-End-User-Budget` when `OTARI_END_USER_BUDGET` is set. | The header. Mismatched `user` rejection is live-verified. |
-| Guardrails | Default mode `monitor`. Sample `05_ticket_guardrail` uses mode `block` on a prompt-injection note. Block (HTTP 403) and flag (200 with a guardrail flag) both quarantine. | A live block or flag, and the dashboard mandate. Monitor was accepted but returned `valid: null`. Block returned HTTP 502 "no guardrails service is configured", reported as `guardrail_upstream_error`. |
+| Guardrails | Default profile `wilding-prompt-injection`, mode `monitor`. Sample `05_ticket_guardrail` uses mode `block`. Block (HTTP 403) and flag both quarantine. A 5xx that mentions a guardrail is `guardrail_upstream_error`. | Profile `wilding-prompt-injection` (Lakera Guard, pending) on a completion. A live block or flag. Older profile `prompt-injection` was accepted, monitor returned `valid: null`, and block returned HTTP 502 with no guardrail service. |
 | MCP | `python -m demo mcp` speaks newline-delimited JSON-RPC and negotiates `protocolVersion`. The pipeline calls `validate_output`. | **Tools → MCP servers**. Stdio is not reachable from the gateway. |
 
 ### Pass, repair, quarantine
@@ -51,16 +51,22 @@ A budget or authentication failure, or an upstream guardrail error (5xx while gu
 
 No latency, cost, or accuracy figure is claimed. Fixture classifications are not measurements.
 
-## Dashboard steps still required
+## Dashboard-configured (not live-verified)
 
-Copied in short form. The README has the click labels.
+A completion has not shown these taking effect. Live runs now send the policy names and the guardrail profile below so a later run can.
 
-1. **API Keys → Create Key.** Export `OTARI_API_KEY`. Base URL `https://otari.ai/api/v1`.
-2. **Routing → Policies.** Fallback chains `wilding-extractor` and `wilding-repairer` as in the README, only if provider keys exist for those models. Wallet-billed calls name the model id directly. Client-side fallback still runs.
-3. **Organization → Spend & Budgets.** Budget `wilding-cap`, amount `2`, period Monthly. Ceiling on the demo workspace, all providers, named `wilding-workspace-ceiling`.
-4. Per-user: leave `user` unset unless it is the API key's own user. A mismatched value was rejected on a hosted run. Set `OTARI_END_USER_BUDGET` only for a service key that may assign that budget (access-control page). The header is unverified on the hosted wizard.
-5. **Organization → Guardrails.** Configure `wilding-prompt-injection`, mandate `wilding-input-check` on the demo workspace. The client already sends profile `prompt-injection`; that field was accepted. Sample 05 sends mode `block`. A live block or flag has not been observed: block mode returned HTTP 502 because no guardrails service is configured (open upstream question, owner Alex Suarez).
-6. **Tools → MCP servers.** Add `aischemagate-validate` only after you have an HTTPS URL. Until then, use `python -m demo mcp` locally. Do not point the hosted gateway at a loopback address.
+| Item | Exact setting |
+| --- | --- |
+| `wilding-extractor` | Request `model`. Chain: Qwen3-235B-A22B-Instruct-2507 on DeepInfra, then gpt-oss-120b. |
+| `wilding-repairer` | Request `model`. Chain: Mistral-Small-3.2-24B on OVHcloud, then gpt-oss-120b. |
+| `wilding-cap` | $2, monthly. |
+| `wilding-workspace-ceiling` | Workspace ceiling that applies `wilding-cap`. |
+| `wilding-member-cap` | Member budget, $1. |
+| `wilding-prompt-injection` | Guardrail name the client sends. Vendor Lakera Guard. Pending. |
+
+`--direct-models` still sends `alibaba/qwen3-235b-a22b-instruct-2507` and `mistralai/mistral-small-3.2-24b-instruct-2506` with a client-side gpt-oss fallback. That path is the live-verified one.
+
+Still to do outside this repo: finish the pending Lakera guardrail, and attach hosted MCP only with an HTTPS URL the gateway can reach (`python -m demo mcp` stays local stdio). Leave `user` unset unless it is the API key's own user. `OTARI_END_USER_BUDGET` is unverified on the hosted wizard.
 
 ## What the tests cover
 

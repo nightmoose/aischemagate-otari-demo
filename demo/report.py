@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from demo.config import LIVE_VERIFIED, UNVERIFIED
+from demo.config import DASHBOARD_CONFIGURED, LIVE_VERIFIED, UNVERIFIED
 from demo.pipeline import SampleResult
 
 
@@ -17,6 +17,7 @@ def summarize(results: list[SampleResult], *, mode: str) -> dict[str, Any]:
         "mode": mode,
         "live_otari_completions": mode == "live",
         "live_verified": list(LIVE_VERIFIED),
+        "dashboard_configured": list(DASHBOARD_CONFIGURED),
         "unverified": list(UNVERIFIED),
         "counts": counts,
         "results": [item.to_dict() for item in results],
@@ -26,6 +27,7 @@ def summarize(results: list[SampleResult], *, mode: str) -> dict[str, Any]:
 def render_text(summary: dict[str, Any]) -> str:
     lines = [
         f"mode: {summary['mode']}",
+        f"model selection: {summary.get('model_selection', 'direct')}",
         "live Otari completions in this process: "
         + ("attempted (outcome not independently verified here)" if summary["live_otari_completions"] else "not called"),
         "",
@@ -50,6 +52,9 @@ def render_text(summary: dict[str, Any]) -> str:
     lines.append("These counts describe this run's fixture or live classifications. They are not a benchmark.")
     lines.append("Live-verified on a hosted run (a dry-run does not re-check them):")
     for item in summary.get("live_verified") or []:
+        lines.append(f"- {item}")
+    lines.append("Dashboard-configured (not live-verified until a completion shows it):")
+    for item in summary.get("dashboard_configured") or []:
         lines.append(f"- {item}")
     lines.append("Still unverified:")
     for item in summary.get("unverified") or []:

@@ -34,16 +34,15 @@ Point at four lines, one each:
 
 Say: these five replies were written into `fixtures/` so the demo runs with no API key and no spend. They are not a benchmark.
 
-## 1:35–2:20 — What the account still needs
+## 1:35–2:20 — Dashboard-configured, not yet shown on a call
 
-Switch to the otari.ai dashboard only if you are logged in. Otherwise leave this as a slide with the README list.
+Say these exist in the dashboard and that this recording has not shown a completion using them, unless you just did.
 
-- **Routing → Policies:** fallback chains for the two roles, and the caveat that wallet models are selected by naming them on the request
-- **Spend & Budgets:** budget `wilding-cap` at 2 USD monthly, ceiling on this workspace
-- **Guardrails:** mandate a monitor check, then block when you want refusals
-- Mention that `user` is omitted unless it matches the API key (a mismatched value was rejected) and that `Otari-End-User-Budget` is optional and unverified
-
-If you did not click these in the recording, say they are still operator setup.
+- `wilding-extractor`: Qwen3-235B-A22B-Instruct-2507 on DeepInfra, then gpt-oss-120b. Live runs send that name as `model`.
+- `wilding-repairer`: Mistral-Small-3.2-24B on OVHcloud, then gpt-oss-120b.
+- `wilding-cap` is $2 monthly, workspace ceiling `wilding-workspace-ceiling`. Member budget `wilding-member-cap` is $1.
+- Guardrail `wilding-prompt-injection` (Lakera Guard) is pending. The client sends that profile. A block has not been observed.
+- `user` stays unset unless it matches the API key.
 
 ## 2:20–2:45 — MCP
 

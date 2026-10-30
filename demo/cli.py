@@ -43,6 +43,16 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--base-url", default=os.environ.get("OTARI_BASE_URL", DEFAULT_BASE_URL))
     run.add_argument("--guardrail-profile", default=DEFAULT_GUARDRAIL_PROFILE)
     run.add_argument("--guardrail-mode", choices=["monitor", "block", "off"], default=None)
+    run.add_argument(
+        "--use-policies",
+        action="store_true",
+        help="Send wilding-extractor and wilding-repairer as model. Default on a live run.",
+    )
+    run.add_argument(
+        "--direct-models",
+        action="store_true",
+        help="Send vendor/model ids and the client-side gpt-oss fallback. Default on --dry-run.",
+    )
     run.add_argument("--json", action="store_true", dest="as_json")
     run.add_argument("--timeout", type=float, default=30.0)
 
@@ -72,6 +82,16 @@ def _run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+
+    if args.use_policies and args.direct_models:
+        print("Pass only one of --use-policies and --direct-models.", file=sys.stderr)
+        return 2
+    if args.direct_models:
+        use_policies = False
+    elif args.use_policies:
+        use_policies = True
+    else:
+        use_policies = not args.dry_run
 
     max_tokens = clamp_max_tokens(args.max_tokens)
     guardrail_mode = args.guardrail_mode or "monitor"
@@ -106,13 +126,14 @@ def _run(args: argparse.Namespace) -> int:
         )
         shape = OpenAIShape(client)
         session = InProcessMcp(llm=shape)
-        result = run_sample(sample_dir, client, session, compiled)
+        result = run_sample(sample_dir, client, session, compiled, use_policies=use_policies)
         results.append(result)
         if result.status == "error" and not args.dry_run:
             # A budget or auth failure will not succeed on the next sample.
             break
 
     summary = summarize(results, mode="dry-run" if args.dry_run else "live")
+    summary["model_selection"] = "policies" if use_policies else "direct"
     text = render_json(summary) if args.as_json else render_text(summary)
     print(text)
     if any(item.status == "error" for item in results):
