@@ -29,7 +29,7 @@ def test_dry_run_classifies_samples(capsys):
     assert summary["live_otari_completions"] is False
     assert "hosted chat completions" in summary["live_verified"]
     assert "user omitted unless set; a user that does not match the API key is rejected" in summary["live_verified"]
-    assert "live fallback from an unknown model id to openai/gpt-oss-120b" in summary["unverified"]
+    assert "live fallback from an unknown model id (HTTP 400 invalid_model) to openai/gpt-oss-120b" in summary["live_verified"]
     assert "live guardrail block or flag on the injection sample" in summary["unverified"]
     by_name = {item["sample"]: item for item in summary["results"]}
     assert by_name["01_invoice_pass"]["status"] == "pass"

@@ -38,6 +38,8 @@ LIVE_VERIFIED = (
     "repair outcome (extractor, then repairer)",
     "guardrails request field accepted by the gateway",
     "user omitted unless set; a user that does not match the API key is rejected",
+    "live fallback from an unknown model id (HTTP 400 invalid_model) to openai/gpt-oss-120b",
+    "live quarantine when a required field is absent from the source",
 )
 
 # Not observed on that hosted run, or not exercised by an authenticated call.
@@ -47,6 +49,4 @@ UNVERIFIED = (
     "hosted guardrail mandate",
     "live guardrail block or flag on the injection sample",
     "hosted per-user budget header Otari-End-User-Budget",
-    "live fallback from an unknown model id to openai/gpt-oss-120b",
-    "live quarantine when a required field is absent from the source",
 )
