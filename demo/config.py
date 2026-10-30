@@ -17,7 +17,8 @@ FALLBACK_MODEL = "openai/gpt-oss-120b"
 MAX_TOKENS_LIMIT = 512
 DEFAULT_MAX_TOKENS = 256
 
-DEFAULT_USER = "demo-operator"
+# Otari rejects a `user` that does not match the API key's own user, so it is omitted by default.
+DEFAULT_USER = ""
 DEFAULT_GUARDRAIL_PROFILE = "prompt-injection"
 DEFAULT_GUARDRAIL_MODE = "monitor"
 

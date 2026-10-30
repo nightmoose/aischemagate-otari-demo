@@ -111,10 +111,11 @@ class OtariClient:
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": 0,
-            "user": self.user,
             "stream": False,
             "response_format": {"type": "json_object"},
         }
+        if self.user:
+            payload["user"] = self.user
         if self.guardrails:
             payload["guardrails"] = self.guardrails
         if self.mcp_server_ids:
