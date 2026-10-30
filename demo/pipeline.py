@@ -259,7 +259,7 @@ def _model_list(override: Any, default: list[str]) -> list[str]:
 def _apply_guardrail_mode(client: OtariClient, mode: Any) -> None:
     """A sample may force monitor or block. The profile stays the one already configured."""
 
-    if mode not in ("monitor", "block"):
+    if client.guardrail_mode_locked or mode not in ("monitor", "block"):
         return
     profile = DEFAULT_GUARDRAIL_PROFILE
     if client.guardrails:

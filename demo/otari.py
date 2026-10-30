@@ -65,6 +65,7 @@ class OtariClient:
     mcp_server_ids: list[str] = field(default_factory=list)
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     secrets: list[str] = field(default_factory=list)
+    guardrail_mode_locked: bool = False
     traces: list[CallTrace] = field(default_factory=list)
 
     def complete(
@@ -98,6 +99,14 @@ class OtariClient:
                 trace_code = "guardrail_flagged"
             elif signal == "block" and not trace_code:
                 trace_code = "guardrail_violation"
+            if status >= 500 and self.guardrails and "guardrail" in detail.lower():
+                # The gateway could not run the guardrail. That is not a block or a flag.
+                self._trace(role, model, status, attempt, tokens, code="guardrail_upstream_error")
+                raise OtariError(
+                    f"upstream guardrail error (HTTP {status}): {detail}",
+                    status=status,
+                    code="guardrail_upstream_error",
+                )
             self._trace(role, model, status, attempt, tokens, code=trace_code)
             if signal == "block":
                 raise GuardrailBlocked(

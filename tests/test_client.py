@@ -184,3 +184,22 @@ def test_llmgate_completion_uses_the_otari_client():
     assert client.traces[0].user == "customer-42"
     assert client.traces[0].max_tokens == 64
     assert gate._llm is shape
+
+
+def test_guardrail_5xx_is_upstream_error_not_block():
+    from demo.errors import OtariError
+    from demo.otari import guardrail_request
+
+    detail = "guardrail profile 'prompt-injection' requested but no guardrails service is configured."
+    transport = FixtureTransport([{"status": 502, "body": {"detail": detail}}])
+    client = OtariClient(transport=transport, user="", guardrails=guardrail_request("prompt-injection", "block"))
+    try:
+        client.complete(models=[EXTRACTOR_MODEL, FALLBACK_MODEL], messages=[{"role": "user", "content": "hi"}], role="extractor")
+    except GuardrailBlocked:
+        raise AssertionError("an upstream guardrail failure must not be reported as a block")
+    except OtariError as exc:
+        assert exc.code == "guardrail_upstream_error"
+    else:
+        raise AssertionError("upstream guardrail error was ignored")
+    assert len(client.traces) == 1
+    assert client.traces[0].code == "guardrail_upstream_error"

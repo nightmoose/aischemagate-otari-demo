@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     run.add_argument("--base-url", default=os.environ.get("OTARI_BASE_URL", DEFAULT_BASE_URL))
     run.add_argument("--guardrail-profile", default=DEFAULT_GUARDRAIL_PROFILE)
-    run.add_argument("--guardrail-mode", choices=["monitor", "block", "off"], default="monitor")
+    run.add_argument("--guardrail-mode", choices=["monitor", "block", "off"], default=None)
     run.add_argument("--json", action="store_true", dest="as_json")
     run.add_argument("--timeout", type=float, default=30.0)
 
@@ -74,7 +74,8 @@ def _run(args: argparse.Namespace) -> int:
         return 2
 
     max_tokens = clamp_max_tokens(args.max_tokens)
-    guardrails = guardrail_request(args.guardrail_profile, args.guardrail_mode)
+    guardrail_mode = args.guardrail_mode or "monitor"
+    guardrails = guardrail_request(args.guardrail_profile, guardrail_mode)
     end_user_budget = os.environ.get("OTARI_END_USER_BUDGET", "").strip()
     mcp_server_id = os.environ.get("OTARI_MCP_SERVER_ID", "").strip()
     mcp_url = os.environ.get("OTARI_MCP_URL", "").strip()
@@ -100,6 +101,7 @@ def _run(args: argparse.Namespace) -> int:
             end_user_budget=end_user_budget,
             mcp_server_ids=mcp_ids,
             mcp_servers=mcp_servers,
+            guardrail_mode_locked=args.guardrail_mode is not None,
             **transport_kwargs,
         )
         shape = OpenAIShape(client)
