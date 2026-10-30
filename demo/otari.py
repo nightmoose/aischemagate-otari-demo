@@ -18,6 +18,7 @@ from demo.config import (
     DEFAULT_GUARDRAIL_MODE,
     DEFAULT_GUARDRAIL_PROFILE,
     DEFAULT_MAX_TOKENS,
+    FALLBACK_MAX_TOKENS,
     FALLBACK_MODEL,
     MAX_TOKENS_LIMIT,
 )
@@ -45,6 +46,7 @@ class CallTrace:
     user: str
     max_tokens: int
     guardrail_profiles: list[str]
+    guardrail_modes: list[str]
     end_user_budget_set: bool
     mcp_server_ids: list[str]
     mcp_server_names: list[str]
@@ -75,9 +77,9 @@ class OtariClient:
     ) -> dict[str, Any]:
         if not models:
             raise OtariError("A role needs at least one model id.", status=0, code="no_model")
-        tokens = self.max_tokens if max_tokens is None else clamp_max_tokens(max_tokens)
         failures: list[str] = []
         for attempt, model in enumerate(models, start=1):
+            tokens = _tokens_for(model, self.max_tokens if max_tokens is None else max_tokens)
             payload = self._payload(model, messages, tokens)
             extra_headers: dict[str, str] = {}
             if self.end_user_budget:
@@ -89,20 +91,34 @@ class OtariClient:
                 self._trace(role, model, 0, attempt, tokens, code=exc.code or "transport")
                 continue
             code = _error_code(body, headers)
-            self._trace(role, model, status, attempt, tokens, code=code)
+            detail = _error_detail(body)
+            signal = _guardrail_signal(status, code, headers, body)
+            trace_code = code
+            if signal == "flag" and not trace_code:
+                trace_code = "guardrail_flagged"
+            elif signal == "block" and not trace_code:
+                trace_code = "guardrail_violation"
+            self._trace(role, model, status, attempt, tokens, code=trace_code)
+            if signal == "block":
+                raise GuardrailBlocked(
+                    detail or "guardrail blocked the request",
+                    status=status,
+                    code=code or "guardrail_violation",
+                )
+            if signal == "flag":
+                raise GuardrailBlocked(
+                    detail or "guardrail flagged the response",
+                    status=status,
+                    code="guardrail_flagged",
+                )
             if status == 200 and isinstance(body, dict) and body.get("choices"):
                 return body
-            if _is_guardrail(status, code):
-                detail = _error_detail(body) or "guardrail blocked the request"
-                raise GuardrailBlocked(detail, status=status, code=code or "guardrail_violation")
-            if _is_budget(status, code, _error_detail(body)):
-                detail = _error_detail(body) or "budget refused the request"
-                raise BudgetExceeded(detail, status=status, code=code or "budget")
-            if status in _RETRYABLE_STATUS:
+            if _is_budget(status, code, detail):
+                raise BudgetExceeded(detail or "budget refused the request", status=status, code=code or "budget")
+            if status in _RETRYABLE_STATUS or _is_unavailable_model(status, code, detail):
                 failures.append(f"{model}: HTTP {status} {code}".strip())
                 continue
-            detail = _error_detail(body) or f"HTTP {status}"
-            raise OtariError(detail, status=status, code=code)
+            raise OtariError(detail or f"HTTP {status}", status=status, code=code)
         raise FallbackExhausted(failures)
 
     def _payload(self, model: str, messages: list[dict[str, str]], max_tokens: int) -> dict[str, Any]:
@@ -114,6 +130,9 @@ class OtariClient:
             "stream": False,
             "response_format": {"type": "json_object"},
         }
+        if model == FALLBACK_MODEL:
+            # Same cap under the newer field name, which wins when both are sent.
+            payload["max_completion_tokens"] = max_tokens
         if self.user:
             payload["user"] = self.user
         if self.guardrails:
@@ -126,6 +145,7 @@ class OtariClient:
 
     def _trace(self, role: str, model: str, status: int, attempt: int, max_tokens: int, code: str = "") -> None:
         profiles = [str(item.get("profile", "")) for item in (self.guardrails or [])]
+        modes = [str(item.get("mode", "")) for item in (self.guardrails or [])]
         names = [str(item.get("name", "")) for item in self.mcp_servers]
         self.traces.append(
             CallTrace(
@@ -136,6 +156,7 @@ class OtariClient:
                 user=self.user,
                 max_tokens=max_tokens,
                 guardrail_profiles=profiles,
+                guardrail_modes=modes,
                 end_user_budget_set=bool(self.end_user_budget),
                 mcp_server_ids=list(self.mcp_server_ids),
                 mcp_server_names=names,
@@ -188,6 +209,15 @@ def clamp_max_tokens(value: int) -> int:
     if value > MAX_TOKENS_LIMIT:
         return MAX_TOKENS_LIMIT
     return value
+
+
+def _tokens_for(model: str, requested: int) -> int:
+    """Role calls stay clamped. gpt-oss gets a higher cap because it reasons first."""
+
+    capped = clamp_max_tokens(requested)
+    if model == FALLBACK_MODEL:
+        return max(capped, FALLBACK_MAX_TOKENS)
+    return capped
 
 
 def guardrail_request(profile: str, mode: str) -> list[dict[str, Any]] | None:
@@ -274,8 +304,92 @@ def _error_detail(body: dict[str, Any]) -> str:
     return ""
 
 
-def _is_guardrail(status: int, code: str) -> bool:
-    return status == 403 and code == "guardrail_violation"
+def _guardrail_signal(
+    status: int,
+    code: str,
+    headers: dict[str, str],
+    body: dict[str, Any],
+) -> str | None:
+    """Return ``block``, ``flag``, or None.
+
+    A 403 ``guardrail_violation`` is the documented block. A 200 that carries
+    a guardrail header or result marked flag/block is a flag. The request's
+    own ``mode`` value is not scanned, so a normal completion is not a flag.
+    A live flag body was not captured; the header and result-key checks are
+    the handling path.
+    """
+
+    if status == 403 and (code == "guardrail_violation" or _header_says_guardrail(headers)):
+        return "block"
+    if _header_says_guardrail(headers):
+        return "flag" if _header_is_flag(headers) else "block"
+    for key in ("guardrail_results", "guardrails_result", "moderation"):
+        found = _scan_guardrail_result(body.get(key))
+        if found:
+            return found
+    return None
+
+
+def _header_says_guardrail(headers: dict[str, str]) -> bool:
+    for key, value in headers.items():
+        if "guardrail" not in key:
+            continue
+        lowered = value.lower()
+        if any(word in lowered for word in ("block", "flag", "violation")):
+            return True
+    return False
+
+
+def _header_is_flag(headers: dict[str, str]) -> bool:
+    blob = " ".join(value.lower() for key, value in headers.items() if "guardrail" in key)
+    return "flag" in blob and "violation" not in blob and "block" not in blob
+
+
+def _scan_guardrail_result(value: Any) -> str | None:
+    if isinstance(value, dict):
+        action = " ".join(
+            str(value.get(key, "")) for key in ("action", "decision", "status", "outcome")
+        ).lower()
+        if "flag" in action:
+            return "flag"
+        if any(word in action for word in ("block", "violation")):
+            return "block"
+        return None
+    if isinstance(value, list):
+        for item in value:
+            found = _scan_guardrail_result(item)
+            if found:
+                return found
+    return None
+
+
+def _is_unavailable_model(status: int, code: str, detail: str) -> bool:
+    """A missing catalog id should fall through to the next model.
+
+    404 is already retryable. Some gateways answer 400 or 422 instead.
+    Auth and guardrail failures are classified earlier and are not this.
+    """
+
+    if status not in (400, 404, 422):
+        return False
+    blob = f"{code} {detail}".lower()
+    if code.lower() in {"model_not_found", "unknown_model", "model_not_available", "model_unavailable"}:
+        return True
+    if "model" not in blob:
+        return False
+    return any(
+        phrase in blob
+        for phrase in (
+            "not found",
+            "does not exist",
+            "doesn't exist",
+            "unknown",
+            "unavailable",
+            "not available",
+            "no such",
+            "not supported",
+        )
+    )
 
 
 def _is_budget(status: int, code: str, detail: str) -> bool:

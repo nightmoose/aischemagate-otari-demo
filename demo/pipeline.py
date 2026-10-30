@@ -12,11 +12,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from demo.config import EXTRACTOR_MODEL, FALLBACK_MODEL, REPAIRER_MODEL
+from demo.config import DEFAULT_GUARDRAIL_PROFILE, EXTRACTOR_MODEL, FALLBACK_MODEL, REPAIRER_MODEL
 from demo.errors import BudgetExceeded, FallbackExhausted, GuardrailBlocked, OtariError, public_message
 from demo.gate import contract_brief, load_contracts
 from demo.mcp_server import TOOL_NAME, InProcessMcp
-from demo.otari import OtariClient
+from demo.otari import OtariClient, guardrail_request
 
 _SOURCE_LIMIT = 4000
 
@@ -77,6 +77,16 @@ class FixtureTransport:
         return status, headers, body
 
 
+def load_options(sample_dir: Path) -> dict[str, Any]:
+    path = sample_dir / "options.json"
+    if not path.is_file():
+        return {}
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Sample options {path} must be a JSON object.")
+    return parsed
+
+
 def run_sample(
     sample_dir: Path,
     client: OtariClient,
@@ -87,15 +97,18 @@ def run_sample(
     contract_name = (sample_dir / "contract.txt").read_text(encoding="utf-8").strip()
     if contract_name not in compiled:
         return SampleResult(sample=name, status="error", contract=contract_name, reason="unknown_contract")
+    options = load_options(sample_dir)
+    _apply_guardrail_mode(client, options.get("guardrail_mode"))
     source = (sample_dir / "input.txt").read_text(encoding="utf-8").strip()
     if len(source) > _SOURCE_LIMIT:
         source = source[:_SOURCE_LIMIT]
     brief = contract_brief(compiled[contract_name])
+    forbid = bool(options.get("forbid_invention"))
     trace_start = len(client.traces)
     try:
         extracted = client.complete(
-            models=extractor_models(),
-            messages=_extract_messages(brief, source),
+            models=_model_list(options.get("extractor_models"), extractor_models()),
+            messages=_extract_messages(brief, source, forbid_invention=forbid),
             role="extractor",
         )
     except GuardrailBlocked as exc:
@@ -135,8 +148,14 @@ def run_sample(
 
     try:
         repaired = client.complete(
-            models=repairer_models(),
-            messages=_repair_messages(brief, _content_text(extracted), first_violations),
+            models=_model_list(options.get("repairer_models"), repairer_models()),
+            messages=_repair_messages(
+                brief,
+                _content_text(extracted),
+                first_violations,
+                source=source,
+                forbid_invention=forbid,
+            ),
             role="repairer",
         )
     except GuardrailBlocked as exc:
@@ -215,6 +234,7 @@ def _trace_dict(item: Any) -> dict[str, Any]:
         "user": item.user,
         "max_tokens": item.max_tokens,
         "guardrail_profiles": list(item.guardrail_profiles),
+        "guardrail_modes": list(item.guardrail_modes),
         "end_user_budget_set": item.end_user_budget_set,
         "mcp_server_ids": list(item.mcp_server_ids),
         "mcp_server_names": list(item.mcp_server_names),
@@ -230,28 +250,67 @@ def _content_text(completion: dict[str, Any]) -> str:
     return content if isinstance(content, str) else json.dumps(content)
 
 
-def _extract_messages(brief: str, source: str) -> list[dict[str, str]]:
+def _model_list(override: Any, default: list[str]) -> list[str]:
+    if isinstance(override, list) and override and all(isinstance(item, str) and item for item in override):
+        return list(override)
+    return default
+
+
+def _apply_guardrail_mode(client: OtariClient, mode: Any) -> None:
+    """A sample may force monitor or block. The profile stays the one already configured."""
+
+    if mode not in ("monitor", "block"):
+        return
+    profile = DEFAULT_GUARDRAIL_PROFILE
+    if client.guardrails:
+        profile = str(client.guardrails[0].get("profile") or profile)
+    client.guardrails = guardrail_request(profile, mode)
+
+
+_NO_INVENT = (
+    "Use only values written in the source text. "
+    "If a required field is not in the source, omit it. "
+    "Do not invent an identifier, enum, or number to satisfy the contract."
+)
+
+
+def _extract_messages(brief: str, source: str, *, forbid_invention: bool = False) -> list[dict[str, str]]:
+    system = "Extract one JSON object that matches the contract. No prose and no markdown."
+    if forbid_invention:
+        system = system + " " + _NO_INVENT
     return [
-        {
-            "role": "system",
-            "content": "Extract one JSON object that matches the contract. No prose and no markdown.",
-        },
+        {"role": "system", "content": system},
         {"role": "user", "content": brief + "\n\nText:\n" + source},
     ]
 
 
-def _repair_messages(brief: str, rejected: str, violations: list[dict[str, str]]) -> list[dict[str, str]]:
-    lines = ["The JSON failed the contract. Return only the corrected JSON object."]
+def _repair_messages(
+    brief: str,
+    rejected: str,
+    violations: list[dict[str, str]],
+    *,
+    source: str = "",
+    forbid_invention: bool = False,
+) -> list[dict[str, str]]:
+    if forbid_invention:
+        system = "You repair JSON. Output one JSON object. " + _NO_INVENT
+        lines = [
+            "The JSON failed the contract. Do not invent a missing required value.",
+            "If the source text does not contain it, leave the field out.",
+        ]
+    else:
+        system = "You repair JSON so it satisfies the contract. Output one JSON object."
+        lines = ["The JSON failed the contract. Return only the corrected JSON object."]
     for item in violations:
         lines.append(f"- {item.get('field', '')}: {item.get('message', '')}")
+    if forbid_invention and source:
+        lines.append("Source text:")
+        lines.append(source[:2000])
     lines.append("Rejected JSON:")
     lines.append(rejected[:2000])
     lines.append("Fields:")
     lines.append(brief)
     return [
-        {
-            "role": "system",
-            "content": "You repair JSON so it satisfies the contract. Output one JSON object.",
-        },
+        {"role": "system", "content": system},
         {"role": "user", "content": "\n".join(lines)},
     ]

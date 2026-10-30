@@ -10,7 +10,7 @@
           "finish_reason": "stop",
           "message": {
             "role": "assistant",
-            "content": "{\"ticket_id\":\"T-77\",\"priority\":\"urgent\",\"category\":\"unknown\",\"summary\":\"see attached\"}"
+            "content": "{\"priority\":\"high\",\"category\":\"access\",\"summary\":\"Cannot log in after a password reset\"}"
           }
         }
       ]
@@ -27,7 +27,7 @@
           "finish_reason": "stop",
           "message": {
             "role": "assistant",
-            "content": "{\"ticket_id\":\"T-77\",\"priority\":\"URGENT\",\"category\":\"other\",\"summary\":\"see attached\"}"
+            "content": "{\"priority\":\"high\",\"category\":\"access\",\"summary\":\"Cannot log in after a password reset\"}"
           }
         }
       ]

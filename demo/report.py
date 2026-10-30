@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from demo.config import LIVE_VERIFIED, UNVERIFIED
 from demo.pipeline import SampleResult
 
 
@@ -15,7 +16,8 @@ def summarize(results: list[SampleResult], *, mode: str) -> dict[str, Any]:
     return {
         "mode": mode,
         "live_otari_completions": mode == "live",
-        "live_verified": False,
+        "live_verified": list(LIVE_VERIFIED),
+        "unverified": list(UNVERIFIED),
         "counts": counts,
         "results": [item.to_dict() for item in results],
     }
@@ -46,8 +48,12 @@ def render_text(summary: dict[str, Any]) -> str:
         f"{counts.get('error', 0)} error"
     )
     lines.append("These counts describe this run's fixture or live classifications. They are not a benchmark.")
-    if not summary["live_verified"]:
-        lines.append("Dashboard routing, budgets, guardrails, and hosted MCP were not live-verified by this process.")
+    lines.append("Live-verified on a hosted run (a dry-run does not re-check them):")
+    for item in summary.get("live_verified") or []:
+        lines.append(f"- {item}")
+    lines.append("Still unverified:")
+    for item in summary.get("unverified") or []:
+        lines.append(f"- {item}")
     return "\n".join(lines)
 
 

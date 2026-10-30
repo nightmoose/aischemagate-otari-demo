@@ -1,9 +1,9 @@
 [
   {
-    "status": 503,
+    "status": 404,
     "body": {
-      "detail": "upstream unavailable",
-      "code": "upstream_unavailable"
+      "detail": "The model example/not-a-deployed-model does not exist",
+      "code": "model_not_found"
     }
   },
   {

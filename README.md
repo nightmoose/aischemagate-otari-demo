@@ -6,7 +6,7 @@ An extractor model on the hosted [Otari](https://otari.ai) gateway turns the not
 
 Live calls use the workspace key in `OTARI_API_KEY`. That value is read at runtime and is never written by this repo. `--dry-run` replays authored fixtures and does not call Otari, so tests run without the key.
 
-Live chat completions, the dashboard routing policy, hosted MCP, a hosted guardrail mandate, and the hosted per-user budget header are unverified. They were not live-verified. An unauthenticated probe on 2026-10-30 checked the URL shape only: `GET https://otari.ai/api/v1/models` returned HTTP 401, and `GET https://api.otari.ai/v1/models` returned HTTP 404 telling the client to use `/api/v1`.
+A hosted run already confirmed: chat completions, the extractor and repairer roles, a repair (Qwen, then Mistral), that the `guardrails` field is accepted, and that `user` is sent only when set because a mismatched `user` is rejected. Still unverified: the dashboard routing policy, hosted MCP, a guardrail mandate, a live block or flag, the `Otari-End-User-Budget` header, a live fallback from an unknown model id, and a live quarantine when a required field is missing from the source. An unauthenticated probe on 2026-10-30 checked the URL shape only: `GET https://otari.ai/api/v1/models` returned HTTP 401, and `GET https://api.otari.ai/v1/models` returned HTTP 404 telling the client to use `/api/v1`.
 
 ## Architecture
 
@@ -37,7 +37,7 @@ Roles:
 | Repairer | `mistralai/mistral-small-3.2-24b-instruct-2506` | Mistral |
 | Client-side fallback for either role | `openai/gpt-oss-120b` | OpenAI |
 
-Model ids are the plain `vendor/model` form. Each request sets `max_tokens` (default 256, clamped at 512), `temperature` 0, and `response_format` `json_object`.
+Model ids are the plain `vendor/model` form. Role calls set `max_tokens` (default 256, clamped at 512), `temperature` 0, and `response_format` `json_object`. The fallback model `openai/gpt-oss-120b` is a reasoning model, so that call uses `max_tokens` 2048. 2048 is a bound so the cap is not spent before the JSON; it is not a measured minimum. `user` is omitted unless `--user` or `OTARI_USER` is set.
 
 Validation is `LLMGate.validate_only`, reached through the MCP tool `validate_output`. The gate is constructed with the caller's OpenAI-compatible client (`llm=`). The check runs in-process on the engine installed with `aischemagate`. The hosted AISchemaGate egress API was not called.
 
@@ -53,10 +53,10 @@ Live run, after the dashboard steps below:
 
 ```bash
 export OTARI_API_KEY="paste-the-workspace-key-here"
-python -m demo run samples/ --user demo-operator
+python -m demo run samples/
 ```
 
-Do not commit the key. `.env.example` lists the variable names with empty values.
+Do not pass `--user` unless that string is the API key's own user. A hosted run rejected a mismatched `user`. Do not commit the key. `.env.example` lists the variable names with empty values.
 
 Other entry points:
 
@@ -65,20 +65,20 @@ python -m demo run samples/ --dry-run --json
 python -m demo mcp
 ```
 
-`python -m demo mcp` speaks stdio MCP and exposes `validate_output`.
+`python -m demo mcp` speaks newline-delimited JSON-RPC on stdio and exposes `validate_output`.
 
 ## Otari features used
 
-Judges should score a feature only where this repo actually exercises it. "Live-verified" means a successful authenticated call or a dashboard click from this environment. None of those were done here.
+Judges should score a feature only where this repo actually exercises it. "Live-verified" means a hosted call already observed it. A dry-run does not add to that list.
 
 | Feature | What the code does | Where | Live-verified |
 | --- | --- | --- | --- |
-| Distinct model roles | Extractor and repairer are different open-weight ids from different vendors. Each sample names one role, then the other only after a contract violation. | `demo/config.py`, `demo/pipeline.py` (`extractor_models`, `repairer_models`) | No |
-| Routing / fallback | `OtariClient.complete` walks the role's model list. Retryable statuses are 404, 408, 409, 429, 500, 502, 503, 504, and transport errors. A guardrail 403 and a budget refusal are not retried. The backup id is `openai/gpt-oss-120b`. Sample `03_invoice_fallback` replays HTTP 503 then a success from the backup. | `demo/otari.py`, `fixtures/03_invoice_fallback/script.json` | No. Dashboard policy not applied. |
-| Budget cap | Inputs are a few lines. `max_tokens` defaults to 256 and is clamped to 512. A body whose code or detail contains `budget` on HTTP 402, 403, or 429 raises `BudgetExceeded` and the run stops. | `demo/config.py`, `demo/otari.py`, `demo/cli.py` | No |
-| Per-user attribution | Every chat completion sends the OpenAI `user` field (`--user`, default `demo-operator`). When `OTARI_END_USER_BUDGET` is set, the client also sends header `Otari-End-User-Budget`. | `demo/otari.py` `_payload` | No |
-| Guardrails | Every request sends `guardrails: [{profile, mode, on: [input]}]` unless `--guardrail-mode off`. Default profile `prompt-injection`, mode `monitor`. HTTP 403 with code `guardrail_violation` (body or `Otari-Error-Code`) quarantines the note and does not call the repairer. Sample `05_ticket_guardrail` replays that response. | `demo/otari.py`, `fixtures/05_ticket_guardrail/script.json` | No |
-| MCP | Tool `validate_output` is the validation path the pipeline calls, via the same JSON-RPC handler as `python -m demo mcp` (stdio, Content-Length framing). Hosted Otari needs a Streamable HTTP URL it can reach. This stdio server is not that URL. If `OTARI_MCP_SERVER_ID` or `OTARI_MCP_URL` is set, the chat body also includes `mcp_server_ids` or `mcp_servers`. | `demo/mcp_server.py`, `demo/pipeline.py` | No |
+| Distinct model roles | Extractor and repairer are different open-weight ids from different vendors. Each sample names one role, then the other only after a contract violation. | `demo/config.py`, `demo/pipeline.py` (`extractor_models`, `repairer_models`) | Yes. A hosted run repaired with Qwen, then Mistral. |
+| Routing / fallback | `OtariClient.complete` walks the role's model list. Retryable statuses include 404, 408, 409, 429, 500, 502, 503, 504, transport errors, and a 400/422 whose body says the model does not exist. A guardrail result and a budget refusal are not retried. Sample `03_invoice_fallback` names `example/not-a-deployed-model` first, then `openai/gpt-oss-120b` at `max_tokens` 2048. | `demo/otari.py`, `samples/03_invoice_fallback/options.json` | No. The unknown-id fallback has not been seen on a live call. Dashboard policy not applied. |
+| Budget cap | Inputs are a few lines. Role `max_tokens` defaults to 256 and is clamped to 512. The reasoning fallback uses 2048. A body whose code or detail contains `budget` on HTTP 402, 403, or 429 raises `BudgetExceeded` and the run stops. | `demo/config.py`, `demo/otari.py`, `demo/cli.py` | No |
+| Per-user attribution | `user` is omitted unless `--user` or `OTARI_USER` is set. When `OTARI_END_USER_BUDGET` is set, the client also sends header `Otari-End-User-Budget`. | `demo/otari.py` `_payload` | The omit-unless-set behavior and the rejection of a mismatched `user` are live-verified. The budget header is not. |
+| Guardrails | Requests send `guardrails: [{profile, mode, on: [input]}]` unless `--guardrail-mode off`. Default profile `prompt-injection`, mode `monitor`. Sample `05_ticket_guardrail` sets mode `block` and sends a prompt-injection note. HTTP 403 `guardrail_violation` is a block. A 200 whose guardrail header or result says flag or block is a flag. Either one quarantines the note and does not call the repairer. | `demo/otari.py`, `samples/05_ticket_guardrail/options.json` | The request field was accepted on a hosted run. A live block or flag was not observed (that run used monitor, and the note was not blocked). |
+| MCP | Tool `validate_output` is the validation path the pipeline calls, via the same JSON-RPC handler as `python -m demo mcp`. Stdio is newline-delimited JSON. `Content-Length` is still accepted. `initialize` echoes the client's `protocolVersion` when it is supported, otherwise `2025-06-18`. Hosted Otari needs a Streamable HTTP URL. This stdio server is not that URL. | `demo/mcp_server.py`, `demo/pipeline.py` | No |
 
 ## Dashboard setup still required
 
@@ -129,8 +129,8 @@ The concepts page at `otari.ai/docs/hosted/concepts/budgets` also describes a me
 
 Per-user attribution on the request:
 
-- The chat schema (`docs.otari.ai/api-reference/chat.md`) documents a `user` string. With an API key, that user must exist; omitting `user` bills the shared default user. This client always sends `user`.
-- The self-hosted access-control page (`docs.otari.ai/otari/for-operators/access-control.md`) documents service keys: the first request that carries a new `user` creates an end user, and header `Otari-End-User-Budget` selects the budget at creation time. Later requests keep the budget already stored. That page is the operator guide, not the hosted Spend & Budgets wizard. Set `OTARI_END_USER_BUDGET` only after the key is a service key that is allowed to assign that budget. The header's effect on hosted otari.ai was **not live-verified**.
+- A hosted run rejected a `user` that did not match the API key. This client therefore omits `user` unless `--user` or `OTARI_USER` is set to that key's own user. That behavior is live-verified.
+- The self-hosted access-control page (`docs.otari.ai/otari/for-operators/access-control.md`) documents service keys: the first request that carries a new `user` creates an end user, and header `Otari-End-User-Budget` selects the budget at creation time. Later requests keep the budget already stored. That page is the operator guide, not the hosted Spend & Budgets wizard. Set `OTARI_END_USER_BUDGET` only after the key is a service key that is allowed to assign that budget. The header's effect on hosted otari.ai is **unverified**.
 
 Exact error code for an exhausted ceiling was not in the pages read. The client treats HTTP 402, 403, or 429 as a budget stop when the code or detail contains `budget`, and it does not try the fallback model.
 
@@ -157,9 +157,9 @@ The client sends:
 "guardrails": [{"profile": "prompt-injection", "mode": "monitor", "on": ["input"]}]
 ```
 
-`prompt-injection` is the profile name used in the gateway routing docs. Whether this workspace's catalog accepts that string was **not live-verified**. If a live call rejects the profile, pass `--guardrail-profile` with the check name from the mandate, or `--guardrail-mode off` to omit the field. A mandate can still run when the field is omitted.
+A hosted run accepted this field. Sample `05_ticket_guardrail` overrides the mode to `block` and sends a prompt-injection note. That block-or-flag outcome is **unverified**: the earlier hosted run used monitor, and the note was classified as a normal pass.
 
-A blocked call is documented as HTTP 403, header `Otari-Error-Code: guardrail_violation`, body `{"detail": "...", "code": "guardrail_violation"}`. The client quarantines that response. That shape was read from the docs, not observed from a live call.
+A blocked call is documented as HTTP 403, header `Otari-Error-Code: guardrail_violation`, body `{"detail": "...", "code": "guardrail_violation"}`. The client also treats a 200 as a flag when a guardrail response header or a `guardrail_results` / `moderation` object says flag or block. Either result quarantines the note and skips the repairer. The flag shape was not captured from a live response.
 
 ### MCP
 
@@ -184,9 +184,9 @@ What does run: the pipeline calls `validate_output` through the local MCP handle
 | --- | --- | --- |
 | `01_invoice_pass` | `invoice_v1` | pass |
 | `02_invoice_repair` | `invoice_v1` | repair (currency, total, status) |
-| `03_invoice_fallback` | `invoice_v1` | pass after a scripted HTTP 503 |
-| `04_ticket_quarantine` | `ticket_v1` | quarantine (priority still illegal after repair) |
-| `05_ticket_guardrail` | `ticket_v1` | quarantine (`guardrail_violation`) |
+| `03_invoice_fallback` | `invoice_v1` | Names `example/not-a-deployed-model`, then `openai/gpt-oss-120b`. Dry-run replays HTTP 404 then a valid invoice. Live fallback is unverified. |
+| `04_ticket_quarantine` | `ticket_v1` | The note has no ticket number. Prompts forbid inventing `ticket_id`. Dry-run keeps the field missing after repair. Live quarantine is unverified. |
+| `05_ticket_guardrail` | `ticket_v1` | Prompt-injection text, guardrail mode `block`. Dry-run replays HTTP 403 `guardrail_violation`. A live block or flag is unverified. |
 
 Fixtures under `fixtures/` are authored stand-ins for the gateway JSON shape. They are not captures of live model output. Counts printed by the CLI are how this run classified those inputs. They are not a quality or latency measurement.
 

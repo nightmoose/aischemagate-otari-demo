@@ -12,7 +12,6 @@ from demo.config import (
     DEFAULT_GUARDRAIL_PROFILE,
     DEFAULT_MAX_TOKENS,
     DEFAULT_USER,
-    UNVERIFIED,
 )
 from demo.gate import load_contracts
 from demo.mcp_server import InProcessMcp, serve
@@ -112,7 +111,6 @@ def _run(args: argparse.Namespace) -> int:
             break
 
     summary = summarize(results, mode="dry-run" if args.dry_run else "live")
-    summary["unverified"] = list(UNVERIFIED)
     text = render_json(summary) if args.as_json else render_text(summary)
     print(text)
     if any(item.status == "error" for item in results):

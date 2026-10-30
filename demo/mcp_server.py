@@ -16,7 +16,12 @@ from aischemagate import LLMResponseError
 
 from demo.gate import build_gates, violation_dicts
 
-PROTOCOL_VERSION = "2025-06-18"
+# Newest first. initialize echoes the client's version when it is in this list.
+SUPPORTED_PROTOCOL_VERSIONS = (
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+)
 TOOL_NAME = "validate_output"
 
 
@@ -67,10 +72,19 @@ def dispatch(message: dict[str, Any], context: ToolContext) -> dict[str, Any] | 
     return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
 
+def negotiated_protocol_version(params: dict[str, Any]) -> str:
+    """Echo the client version when this server supports it. Otherwise the latest."""
+
+    requested = params.get("protocolVersion")
+    if isinstance(requested, str) and requested in SUPPORTED_PROTOCOL_VERSIONS:
+        return requested
+    return SUPPORTED_PROTOCOL_VERSIONS[0]
+
+
 def _call(method: Any, params: dict[str, Any], context: ToolContext) -> Any:
     if method == "initialize":
         return {
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": negotiated_protocol_version(params),
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": "aischemagate-validate", "version": "0.1.0"},
         }
@@ -157,36 +171,79 @@ class _RpcError(Exception):
 
 
 def read_message(stream: BinaryIO) -> dict[str, Any] | None:
-    headers: dict[str, str] = {}
+    message, _framing = read_framed(stream)
+    return message
+
+
+def read_framed(stream: BinaryIO) -> tuple[dict[str, Any] | None, str]:
+    """Read one JSON-RPC message.
+
+    Newline-delimited JSON is the stdio framing from the MCP spec.
+    A ``Content-Length`` header is still accepted.
+    """
+
     while True:
         line = stream.readline()
         if line == b"":
-            return None
-        if line in (b"\r\n", b"\n"):
-            break
-        if b":" not in line:
+            return None, "ndjson"
+        if line in (b"\n", b"\r\n"):
             continue
-        key, value = line.split(b":", 1)
-        headers[key.decode("ascii", errors="replace").strip().lower()] = value.decode(
-            "ascii", errors="replace"
-        ).strip()
-    if "content-length" not in headers:
-        return None
-    length = int(headers["content-length"])
-    raw = stream.read(length)
-    if len(raw) < length:
-        return None
-    parsed = json.loads(raw.decode("utf-8"))
+        stripped = line.strip()
+        if stripped.startswith(b"{") or stripped.startswith(b"["):
+            return _parse_object(stripped), "ndjson"
+        headers = _header_line(stripped)
+        while True:
+            nxt = stream.readline()
+            if nxt == b"":
+                return None, "content-length"
+            if nxt in (b"\n", b"\r\n"):
+                break
+            headers.update(_header_line(nxt.strip()))
+        length_text = headers.get("content-length")
+        if length_text is None:
+            raise _RpcError(-32700, "Content-Length header is missing.")
+        raw = _read_exact(stream, int(length_text))
+        return _parse_object(raw), "content-length"
+
+
+def write_message(stream: BinaryIO, payload: dict[str, Any], framing: str = "ndjson") -> None:
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    if framing == "content-length":
+        stream.write(f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii") + raw)
+    else:
+        stream.write(raw + b"\n")
+    stream.flush()
+
+
+def _parse_object(raw: bytes) -> dict[str, Any]:
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise _RpcError(-32700, "Message was not valid JSON.") from exc
     if not isinstance(parsed, dict):
         raise _RpcError(-32700, "Message was not a JSON object.")
     return parsed
 
 
-def write_message(stream: BinaryIO, payload: dict[str, Any]) -> None:
-    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    header = f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii")
-    stream.write(header + raw)
-    stream.flush()
+def _header_line(line: bytes) -> dict[str, str]:
+    if b":" not in line:
+        return {}
+    key, value = line.split(b":", 1)
+    return {
+        key.decode("ascii", errors="replace").strip().lower(): value.decode("ascii", errors="replace").strip()
+    }
+
+
+def _read_exact(stream: BinaryIO, length: int) -> bytes:
+    chunks = []
+    remaining = length
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            raise _RpcError(-32700, "Message ended before Content-Length bytes were read.")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
 
 
 def serve(stdin: BinaryIO | None = None, stdout: BinaryIO | None = None) -> None:
@@ -195,7 +252,7 @@ def serve(stdin: BinaryIO | None = None, stdout: BinaryIO | None = None) -> None
     context = ToolContext()
     while True:
         try:
-            message = read_message(incoming)
+            message, framing = read_framed(incoming)
         except _RpcError as exc:
             write_message(
                 outgoing,
@@ -206,4 +263,4 @@ def serve(stdin: BinaryIO | None = None, stdout: BinaryIO | None = None) -> None
             return
         reply = dispatch(message, context)
         if reply is not None:
-            write_message(outgoing, reply)
+            write_message(outgoing, reply, framing=framing)

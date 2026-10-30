@@ -3,7 +3,15 @@ import json
 import subprocess
 import sys
 
-from demo.mcp_server import TOOL_NAME, InProcessMcp, read_message, write_message
+from demo.mcp_server import (
+    SUPPORTED_PROTOCOL_VERSIONS,
+    TOOL_NAME,
+    InProcessMcp,
+    ToolContext,
+    dispatch,
+    read_message,
+    write_message,
+)
 
 
 def test_in_process_tool_rejects_a_bad_invoice():
@@ -46,6 +54,7 @@ def test_stdio_server_lists_and_calls_the_tool():
         initialized = read_message(proc.stdout)
         assert initialized is not None
         assert initialized["result"]["serverInfo"]["name"] == "aischemagate-validate"
+        assert initialized["result"]["protocolVersion"] == "2025-06-18"
 
         write_message(proc.stdin, {"jsonrpc": "2.0", "method": "notifications/initialized"})
         write_message(proc.stdin, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
@@ -89,8 +98,39 @@ def test_stdio_server_lists_and_calls_the_tool():
         assert "otk_" not in err
 
 
-def test_framing_round_trip():
+def test_ndjson_and_content_length_round_trip():
     buffer = io.BytesIO()
     write_message(buffer, {"jsonrpc": "2.0", "id": 7, "method": "ping"})
     buffer.seek(0)
     assert read_message(buffer) == {"jsonrpc": "2.0", "id": 7, "method": "ping"}
+
+    framed = io.BytesIO()
+    write_message(framed, {"jsonrpc": "2.0", "id": 8, "method": "ping"}, framing="content-length")
+    framed.seek(0)
+    assert read_message(framed) == {"jsonrpc": "2.0", "id": 8, "method": "ping"}
+
+
+def test_protocol_version_is_negotiated():
+    context = ToolContext()
+    echoed = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05"},
+        },
+        context,
+    )
+    assert echoed is not None
+    assert echoed["result"]["protocolVersion"] == "2024-11-05"
+    latest = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "initialize",
+            "params": {"protocolVersion": "1999-01-01"},
+        },
+        context,
+    )
+    assert latest is not None
+    assert latest["result"]["protocolVersion"] == SUPPORTED_PROTOCOL_VERSIONS[0]

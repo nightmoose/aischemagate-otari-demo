@@ -99,6 +99,55 @@ def test_guardrail_403_is_not_sent_to_the_fallback(monkeypatch):
     assert calls["n"] == 1
 
 
+def test_unknown_model_400_falls_back_and_gpt_oss_gets_a_higher_cap():
+    from demo.config import FALLBACK_MAX_TOKENS
+
+    seen = []
+
+    def transport(payload, extra_headers):
+        del extra_headers
+        seen.append(payload)
+        if len(seen) == 1:
+            return 400, {}, {"detail": "The model example/not-a-deployed-model does not exist", "code": "model_not_found"}
+        return 200, {}, _completion(VALID, model=FALLBACK_MODEL)
+
+    client = OtariClient(transport=transport, user="", max_tokens=256)
+    body = client.complete(
+        models=["example/not-a-deployed-model", FALLBACK_MODEL],
+        messages=[{"role": "user", "content": "hi"}],
+        role="extractor",
+    )
+    assert body["model"] == FALLBACK_MODEL
+    assert "user" not in seen[0]
+    assert seen[0]["max_tokens"] == 256
+    assert "max_completion_tokens" not in seen[0]
+    assert seen[1]["max_tokens"] == FALLBACK_MAX_TOKENS
+    assert seen[1]["max_completion_tokens"] == FALLBACK_MAX_TOKENS
+    assert [item.model for item in client.traces] == ["example/not-a-deployed-model", FALLBACK_MODEL]
+
+
+def test_user_is_sent_only_when_set():
+    seen = []
+
+    def transport(payload, extra_headers):
+        del extra_headers
+        seen.append(payload)
+        return 200, {}, _completion(VALID)
+
+    OtariClient(transport=transport, user="").complete(
+        models=[EXTRACTOR_MODEL],
+        messages=[{"role": "user", "content": "hi"}],
+        role="extractor",
+    )
+    OtariClient(transport=transport, user="matching-key-user").complete(
+        models=[EXTRACTOR_MODEL],
+        messages=[{"role": "user", "content": "hi"}],
+        role="extractor",
+    )
+    assert "user" not in seen[0]
+    assert seen[1]["user"] == "matching-key-user"
+
+
 def test_budget_refusal_does_not_fall_back():
     transport = FixtureTransport(
         [{"status": 402, "body": {"detail": "budget exhausted", "code": "budget_exceeded"}}]

@@ -11,9 +11,17 @@ EXTRACTOR_MODEL = "alibaba/qwen3-235b-a22b-instruct-2507"
 REPAIRER_MODEL = "mistralai/mistral-small-3.2-24b-instruct-2506"
 
 # Client-side backup used when the role model fails with a retryable error.
+# gpt-oss is a reasoning model: the fallback call uses FALLBACK_MAX_TOKENS
+# so the generation cap is not spent before the JSON object. 2048 is a bound,
+# not a measured minimum.
 FALLBACK_MODEL = "openai/gpt-oss-120b"
+FALLBACK_MAX_TOKENS = 2048
 
-# Hard ceiling so a flag cannot send an unbounded generation.
+# Deliberately absent from the catalog. Sample 03 names this first so the
+# gateway errors and the client falls back. Not a live-verified error code.
+UNAVAILABLE_MODEL = "example/not-a-deployed-model"
+
+# Hard ceiling for the open-weight role calls. The fallback model is exempt.
 MAX_TOKENS_LIMIT = 512
 DEFAULT_MAX_TOKENS = 256
 
@@ -22,11 +30,23 @@ DEFAULT_USER = ""
 DEFAULT_GUARDRAIL_PROFILE = "prompt-injection"
 DEFAULT_GUARDRAIL_MODE = "monitor"
 
-# Chat completions the process did not send are not evidence of gateway behavior.
+# Observed on a hosted run. A dry-run does not re-check these.
+LIVE_VERIFIED = (
+    "hosted chat completions",
+    "extractor role alibaba/qwen3-235b-a22b-instruct-2507",
+    "repairer role mistralai/mistral-small-3.2-24b-instruct-2506",
+    "repair outcome (extractor, then repairer)",
+    "guardrails request field accepted by the gateway",
+    "user omitted unless set; a user that does not match the API key is rejected",
+)
+
+# Not observed on that hosted run, or not exercised by an authenticated call.
 UNVERIFIED = (
-    "live Otari chat completions",
     "dashboard routing policy",
     "hosted workspace MCP",
     "hosted guardrail mandate",
-    "hosted per-user budget header",
+    "live guardrail block or flag on the injection sample",
+    "hosted per-user budget header Otari-End-User-Budget",
+    "live fallback from an unknown model id to openai/gpt-oss-120b",
+    "live quarantine when a required field is absent from the source",
 )
